@@ -1,93 +1,26 @@
 # pathfinder
 
 
+We have multiple datasets arranged into $D$ domains and $M$ modalities. For example, domains can be "species", and modalities can be different types of measurements per species. 
 
-## Getting started
+Each dataset is a matrix $\mathbf{X_{d,m}}$ denoting data from domain $d\in \{1,\dots,D\}$ and modality $m\in \{1,\dots,M\}$. The size of such matrix is $r_d\times c_m$, i.e. it has $r_d$ rows and $c_m$ columns. 
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+Through this notation, it can be seen that within any given domain, all datasets share the row dimension, and within any given modality, all the datasets share the column dimension.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+We further assume that we don't necessarily have access to all modalities in all domains. We are missing some of the $\mathbf{X_{d,m}}$'s.
 
-## Add your files
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+Our objective is to find a set of low-rank matrix decompositions $\mathbf{X_{d,m}} = \mathbf{A_{d}}\mathbf{S_{m}^T}$ for all $d$ and all $m$. For a rank-$k$ decomposition, we have $\mathbf{A_d}\in \mathbb{R}^{r_d}\times\mathbb{R}^{k}$ and $\mathbf{S_m}\in \mathbb{R}^{c_m}\times\mathbb{R}^{k}$.
 
-```
-cd existing_repo
-git remote add origin https://git.fmrib.ox.ac.uk/saad/pathfinder.git
-git branch -M main
-git push -uf origin main
-```
+Such decompositions mean that we want to find common subspaces within each domain $d$ and each modality $m$. 
 
-## Integrate with your tools
+The above decompositions are ill-defined unless we add additional constraints on the matrices $\mathbf{A_d}$ and $\mathbf{S_m}$. There are many options, but here, we will use the constraints used in ridge regression, i.e. use the L2-norm.
 
-- [ ] [Set up project integrations](https://git.fmrib.ox.ac.uk/saad/pathfinder/-/settings/integrations)
+Before we write the loss function, we will further assume that we do not have access to all the datasets $\mathbf{X_{d,m}}$. Some of the modalities might be missing in some of the domains. We define a mask $\mathcal{M}$ as the set of matrices that we do have access to, i.e. $\mathcal{M}=\left\{(d,m) \mid \mathbf{X_{d,m}} \text{ exists} \right\}$. 
 
-## Collaborate with your team
+Now we can write the overall loss function as:
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+$$ \mathrm{Loss} = \sum_{(d,m)\in\mathcal{M}} \frac{1}{2}\left\lVert \mathbf{X_{d,m}}-\mathbf{A_{d}}\mathbf{S_{m}^T} \right\rVert^2_{\mathrm{F}} + \alpha \sum_{d=1}^D \left\lVert \mathbf{A_d} \right\rVert^{2}_2 + \alpha \sum_{m=1}^M \left\lVert \mathbf{S_{m}} \right\rVert^2_2$$
 
-## Test and Deploy
-
-Use the built-in continuous integration in GitLab.
-
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+# how to run it
+TBD
