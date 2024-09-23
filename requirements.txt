@@ -2,4 +2,6 @@ numpy
 tqdm
 matplotlib
 scikit-learn
-argparse
+fslpy
+numba
+
