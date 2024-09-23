@@ -1,0 +1,5 @@
+numpy
+tqdm
+matplotlib
+scikit-learn
+argparse
