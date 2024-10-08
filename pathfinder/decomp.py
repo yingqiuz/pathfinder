@@ -10,8 +10,10 @@
 import numpy as np
 from tqdm import tqdm
 
+from pathfinder import utils
+
 class JointDecomp(object):
-    def __init__(self, n_components, n_iter=100, dropout=-1, alpha=1e-5, method=None, method_kwargs=None):
+    def __init__(self, n_components, n_iter=100, dropout=-1, alpha=1e-5, method=None, method_kwargs=None, do_ica=None):
         """Decomposition of a set of data matrices into X=AS'
 
         :param n_components: number of components of low rank decomposition
@@ -20,11 +22,13 @@ class JointDecomp(object):
         :param alpha: Regularisation parameter
         :param method: Regression method to use in sklearn (e.g. sklearn.linear_model.Ridge)
         :param method_kwargs: Keyword arguments to pass to sklearn method
+        :param do_ica: Perform ICA rotation at the end. Can be 'rows', 'cols', or 'both'
         """
         self.n_components = n_components
         self.n_iter       = n_iter
         self.dropout      = dropout
         self.alpha        = alpha
+        self.do_ica       = do_ica
         assert self.dropout<1, 'dropout should be between 0 and 1'
         # sklearn method to use for matrix decomp
         # default = Ridge
@@ -215,6 +219,29 @@ class JointDecomp(object):
             S[m] = S_m
         return
 
+
+    def _perform_ica(self, A, S):
+        """Do a concat ICA at the end of the fitting process
+
+        :param A: list of left-matrices
+        :param S: list of right-matrices
+        :return: rotated A's and S's
+        """
+        X = []
+        if self.do_ica in ['left', 'both']:
+            X.extend(A)
+        if self.do_ica in ['right', 'both']:
+            X.extend(S)
+
+        from sklearn.decomposition import FastICA
+        ica = FastICA(whiten=False)
+        X = np.concatenate(X, axis=0)
+        ica.fit(X)
+        # rotate all matrices
+        A = [ica.transform(a) for a in A]
+        S = [ica.transform(s) for s in S]
+        return A, S
+
     @staticmethod
     def calc_err(DataSet, A, S):
         """Calculate fitting error norm(Data - AS')
@@ -263,6 +290,10 @@ class JointDecomp(object):
             self._update_A(DataSet, A, S, mask)
             self._update_S(DataSet, A, S, mask)
             err.append(self.calc_err(DataSet, A, S))
+
+        # Do ICA at the end?
+        if self.do_ica is not None:
+            A, S = self._perform_ica(A, S)
 
         return A, S, err
 

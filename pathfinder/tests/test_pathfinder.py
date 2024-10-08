@@ -32,6 +32,25 @@ def test_JointDecomp():
     assert len(A) == 3
     assert len(S) == 2
 
+def test_JointDecomp_ICA():
+    data = utils.simulate_data_grid(num_domains=3, num_modalities=2)
+    from sklearn.linear_model import Ridge
+    import warnings
+    warnings.filterwarnings("ignore")
+    algo = decomp.JointDecomp(n_components=5, n_iter=3, dropout=-1, method=Ridge, method_kwargs={'alpha':1e3}, do_ica='left')
+    A, S, err = algo.fit(data)
+    assert len(A) == 3
+    assert len(S) == 2
+    algo = decomp.JointDecomp(n_components=5, n_iter=3, dropout=-1, method=Ridge, method_kwargs={'alpha':1e3}, do_ica='right')
+    A, S, err = algo.fit(data)
+    assert len(A) == 3
+    assert len(S) == 2
+    algo = decomp.JointDecomp(n_components=5, n_iter=3, dropout=-1, method=Ridge, method_kwargs={'alpha':1e3}, do_ica='both')
+    A, S, err = algo.fit(data)
+    assert len(A) == 3
+    assert len(S) == 2
+
+
 def test_predicted_data_grid():
     data = utils.simulate_data_grid(num_domains=3, num_modalities=2)
     algo = decomp.JointDecomp(n_components=5, n_iter=3)

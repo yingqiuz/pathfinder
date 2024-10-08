@@ -14,6 +14,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 # SIMULATIONS
 def simulate_data_grid(num_domains=3, num_modalities=2, rank=5, missing=None, noise=0., output_complete=False):
     """
