@@ -3,5 +3,4 @@ tqdm
 matplotlib
 scikit-learn
 fslpy
-numba
-
+pytest

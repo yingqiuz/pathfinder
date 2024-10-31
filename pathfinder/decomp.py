@@ -9,6 +9,8 @@
 
 import numpy as np
 from tqdm import tqdm
+from scipy.sparse.linalg import svds
+from scipy.linalg import qr
 
 """ Decomposition classes - Interface
 
@@ -26,7 +28,8 @@ For example : Xk = U_{alpha(k)} Dk V_{beta(k)}^T   --> JointSVD
             
             
 decomp.predict() -> list of predicted matrices
-decomp.decomp(k) -> decomposition of matrix number k
+decomp.predict(k) -> predict matrix k
+decomp.decomp(k) -> decomposition of matrix k
 """
 
 
@@ -76,6 +79,8 @@ class JointOuterDecomp(object):
         self._A = None
         self._S = None
         self._loss = None
+        self._data_as_dict = False
+        self._dict_keys = None
 
     def _create_lookup_tables(self):
         """Make backwards lookup tables
@@ -123,7 +128,7 @@ class JointOuterDecomp(object):
 
 
 
-    def decomp(self, M, X, mode):
+    def regress(self, M, X, mode):
         """
         M (2D-array)
         X (2D-array)
@@ -180,7 +185,7 @@ class JointOuterDecomp(object):
         concat_S   = np.concatenate([self._S[self._beta[i]] for i in indices], axis=0)
 
         # Update A
-        self._A[p] = self.decomp(concat_mat, concat_S.T, mode='left')
+        self._A[p] = self.regress(concat_mat, concat_S.T, mode='left')
 
         return
 
@@ -200,7 +205,7 @@ class JointOuterDecomp(object):
         concat_A   = np.concatenate([self._A[self._alpha[i]] for i in indices], axis=0)
 
         # Update A
-        self._S[q] = self.decomp(concat_mat, concat_A, mode='right')
+        self._S[q] = self.regress(concat_mat, concat_A, mode='right')
 
         return
 
@@ -213,16 +218,27 @@ class JointOuterDecomp(object):
         """
         return [ np.linalg.norm(C-Cpred) for C,Cpred in zip(Clist, self.predict()) ]
 
-    def predict(self):
+
+    def decomp(self, k):
+        A = self._A[ self._alpha[k] ]
+        S = self._S[ self._beta[k] ]
+        return A, S
+
+    def predict(self, k=None, as_dict=False):
         """Use internally stored parameters to make a prediction
         """
-        Cpred = []
-        for k in range(self._K):
+        if k is None:
+            Cpred = [self.predict(k) for k in range(self._K)]
+            if as_dict:
+                assert self._data_as_dict == True, 'Cannot predict data as dict as it was provided as a list in the fitting'
+                return utils.Lookup_to_DataTable(Cpred, self._alpha, self._beta, self._dict_keys[0], self._dict_keys[1])
+            else:
+                return Cpred
+        else:
+            assert as_dict == False, 'Can only output a dict if k=None'
             A = self._A[ self._alpha[k] ]
             S = self._S[ self._beta[k] ]
-            Cpred.append( A@S.T )
-        return Cpred
-
+            return A@S.T
 
     def fit(self, Clist, alpha=None, beta=None):
         """Fit list of matrices
@@ -247,6 +263,10 @@ class JointOuterDecomp(object):
         if (alpha is None) or (beta is None):
             # it is assumed that Clist is actually a dict
             assert type(Clist) == dict, 'Clist should be dict if alpha/beta are not provided'
+            self._data_as_dict = True
+            Domains    = list(Clist.keys())
+            Modalities = list(Clist[Domains[0]].keys())
+            self._dict_keys = (Domains, Modalities)
             Clist, alpha, beta = utils.DataTable_to_Lookup(Clist)
 
 
@@ -279,4 +299,232 @@ class JointOuterDecomp(object):
         # store loss
         self._loss = loss
 
+
+
+
+# ANOTHER DECOMPOSITION APPROACH : JointSVD
+class JointSVD(object):
+    def __init__(self, n_components, n_iter=10, do_ica=None):
+        """Joint Singular Value Decomposition
+
+        Given set of matrices C1, ..., CK, performs a joint SVD such that:
+
+        Ck = U_{alpha(k)} Dk V_{beta(k)}^T
+
+        Where the Dk's are eigenvalue matrices (diagonal)
+        And the Ua's and Vb's are a set of orthonormal matrices with n_components columns
+
+        The mappings alpha(k) and beta(k) map from the data indices to the respective left/right ortho matrices
+
+        Algorithm inspired by:
+        Congedo M, et al. Approximate Joint Singular Value Decomposition of an Asymmetric Rectangular Matrix Set.
+        ieee TSP 2010. DOI: 10.1109/TSP.2010.2087018
+        """
+        self._ncomp  = n_components
+        self._niter  = n_iter
+        self._do_ica = do_ica
+        self._K      = None
+        self._P      = None
+        self._Q      = None
+        self._Ulist  = None
+        self._Vlist  = None
+        self._Dlist  = None
+        self._alpha  = None
+        self._beta   = None
+        self._Ulu    = None
+        self._Vlu    = None
+
+        self._data_as_dict = False
+        self._dict_keys = None
+
+    def _create_lookup_tables(self):
+        """Make backwards lookup tables
+
+        Ulu : list of lists such that Ulu[p] = [list of k such that Ck has U[p] as a left matrix]
+        Vlu : list of lists such that Vlu[q] = [list of k such that Ck has V[q] as a right matrix]
+        """
+        self._Ulu = [[] for _ in range(self._P)]
+        self._Vlu = [[] for _ in range(self._Q)]
+
+        for p in range(self._P):
+            for k in range(self._K):
+                if self._alpha[k] == p:
+                    self._Ulu[p].append(k)
+
+        for q in range(self._Q):
+            for k in range(self._K):
+                if self._beta[k] == q:
+                    self._Vlu[q].append(k)
+
+
+    def _check_dimensions(self, Clist):
+        """Check that the dimensions of the input matrices match
+        with what is required from alpha/beta
+        """
+        # loop through backwards lookups and check rows and cols
+        for p in range(self._P):
+            assert len(set([Clist[k].shape[0] for k in self._Ulu[p]])) == 1 , 'Matrices have incompatible rows'
+        for q in range(self._Q):
+            assert len(set([Clist[k].shape[1] for k in self._Vlu[q]])) == 1 , 'Matrices have incompatible cols'
+
+
+
+    def init(self, Clist):
+        """Initialise the U's, the V's, and the D's
+        U's and V's are random
+        the D's are given by minimizing the loss
+        """
+        self._Ulist = [[] for _ in range(self._P)]
+        self._Vlist = [[] for _ in range(self._Q)]
+        self._Dlist = [[] for _ in range(self._K)]
+
+        for p in range(self._P):
+            nrows = Clist[ self._Ulu[p][0] ].shape[0]
+            self._Ulist[p] = qr(np.random.randn(nrows, self._ncomp), mode='economic')[0]
+        for q in range(self._Q):
+#             self._updateV(Clist, q)
+            ncols = Clist[ self._Vlu[q][0] ].shape[1]
+            self._Vlist[q] = qr(np.random.randn(ncols, self._ncomp), mode='economic')[0]
+        for k in range(self._K):
+            self._updateD(Clist,k)
+
+
+    def _updateD(self, Clist, k):
+        """Update the eigenvalues
+        Dk = diag( UTCkV )  with the appropriate U and V for Ck using the lookups
+        """
+        U = self._Ulist[ self._alpha[k] ]
+        V = self._Vlist[ self._beta[k] ]
+        self._Dlist[k] = np.diag( U.T@np.dot(Clist[k], V) )
+
+
+    def _updateU(self, Clist, p):
+        # Un is main eigenvector of Mn(V)
+        U = []
+        for n in range(self._ncomp):
+            MV = []
+            for k in range(self._K):
+                if k in self._Ulu[p]:
+                    C = Clist[k]
+                    v = self._Vlist[self._beta[k]][:,n]
+                    MV.append( np.dot(C, v) )
+            MV = np.asarray(MV).T
+            if MV.shape[1]>1:
+                u = svds(MV, k=1)[0].flatten()
+            else:
+                u  = MV.flatten() / np.linalg.norm(MV)
+
+            U.append(u)
+        U = np.asarray(U).T
+        # orthogonalise U
+        self._Ulist[p] = qr(U, mode='economic')[0]
+
+
+    def _updateV(self, Clist, q):
+        # Vn is main eigenvector of Mn(U)
+        V = []
+        for n in range(self._ncomp):
+            MU = []
+            for k in range(self._K):
+                if k in self._Vlu[q]:
+                    C = Clist[k]
+                    u = self._Ulist[self._alpha[k]][:,n]
+                    MU.append( np.dot(C.T, u) )
+            MU = np.asarray(MU).T
+            if MU.shape[1]>1:
+                v  = svds(MU, k=1)[0].flatten()
+            else:
+                v  = MU.flatten() / np.linalg.norm(MU)
+
+            V.append(v)
+        V = np.asarray(V).T
+        # orthogonalise V
+        self._Vlist[q] = qr(V, mode='economic')[0]
+
+
+    def predict(self, k=None, as_dict=False):
+        if k is None:
+            Cpred = [self.predict(k) for k in range(self._K)]
+            if as_dict:
+                assert self._data_as_dict == True, 'Cannot predict data as dict as it was provided as a list in the fitting'
+                return utils.Lookup_to_DataTable(Cpred, self._alpha, self._beta, self._dict_keys[0], self._dict_keys[1])
+            else:
+                return Cpred
+        else:
+            assert as_dict == False, 'Can only output a dict if k=None'
+            U = self._Ulist[ self._alpha[k] ]
+            V = self._Vlist[ self._beta[k] ]
+            return U@np.diag(self._Dlist[k])@V.T
+
+
+    def decomp(self, k):
+        """Get USV for a given input matrix from list
+        """
+        U = self._Ulist[ self._alpha[k] ]
+        V = self._Vlist[ self._beta[k] ]
+        return U, np.diag(self._Dlist[k]), V
+
+    def fit(self, Clist, alpha=None, beta=None):
+        """Fit list of matrices
+
+        Clist : list of 2D arrays
+        alpha : list of length len(Clist) indexing left matrices for C's
+        beta  : list of length len(Clist) indexing right matrices for C's
+
+
+        For example, if Clist = [C0, C1, C2], and we want:
+
+                    C0=U0D0V0^T
+                    C1=U0D1V1^T
+                    C2=U1D2V1^T
+
+        then alpha = [0,0,1] and beta = [0,1,1]
+
+        """
+
+        # Possibly not the most efficient algorithm in the world, as it concatenates
+        # potentially large matrices.
+        # Checks data dimensions
+        if (alpha is None) or (beta is None):
+            # it is assumed that Clist is actually a dict
+            assert type(Clist) == dict, 'Clist should be dict if alpha/beta are not provided'
+            self._data_as_dict = True
+            Domains    = list(Clist.keys())
+            Modalities = list(Clist[Domains[0]].keys())
+            self._dict_keys = (Domains, Modalities)
+            Clist, alpha, beta = utils.DataTable_to_Lookup(Clist)
+
+        assert (len(Clist)==len(alpha)) & (len(Clist)==len(beta)), 'alpha and beta must have the same length as Clist'
+        self._alpha = alpha
+        self._beta  = beta
+        self._K     = len(Clist)
+        self._P     = max(self._alpha)+1
+        self._Q     = max(self._beta)+1
+        # make backwards lookup tables
+        self._create_lookup_tables()
+        self._check_dimensions(Clist)
+
+        # Initialise
+        self.init(Clist)  # random for now
+
+        self._loss = np.zeros((self._niter+1, self._K))
+        self._loss[0,:] = [ np.linalg.norm(C-Cpred) for C,Cpred in zip(Clist,self.predict()) ]
+        # Main algorithm
+        for it in range(self._niter):
+            # Update U
+            for p in range(self._P):
+                self._updateU(Clist, p)
+            # Update V
+            for q in range(self._Q):
+                self._updateV(Clist, q)
+            # Update D
+            for k in range(self._K):
+                self._updateD(Clist, k)
+            self._loss[it+1,:] = [ np.linalg.norm(C-Cpred) for C,Cpred in zip(Clist,self.predict()) ]
+        # Finish
+        # Do ICA at the end?
+        if self._do_ica is not None:
+            self._Ulist, self._Vlist, ica = utils.perform_ica(self._Ulist, self._Vlist, self._do_ica, return_ica=True)
+            # Need to do something with the D's otherwise predict() doesn't work
+            # NEED TO FIX THIS AND WRITE A TEST
 
