@@ -60,6 +60,41 @@ def simulate_data_grid(num_domains=3, num_modalities=2, rank=5, missing=None, no
     else:
         return DataSets
 
+# Simulate with jointSVD Model
+def simulate_JointSVD(K, num_U, num_V, rank, SNR = 50):
+    valid = False
+    while not valid:
+        alpha = np.random.choice(num_U, K)
+        beta  = np.random.choice(num_V, K)
+        if (len(np.unique(alpha)) == num_U) & (len(np.unique(beta)) == num_V):
+            valid = True
+
+
+    print(alpha)
+    print(beta)
+
+    nrows = 100
+
+    Ulist = [np.linalg.qr(np.random.randn(nrows,rank))[0] for _ in range(num_U)]
+    Vlist = [np.linalg.qr(np.random.randn(nrows,rank))[0] for _ in range(num_V)]
+
+    D = [ np.diag(np.random.rand(rank)) for _ in range(K)]
+    Clist = []
+    for k in range(K):
+        U = Ulist[ alpha[k] ]
+        V = Vlist[ beta[k] ]
+
+        C = U@D[k]@V.T
+
+        # add noise
+        S   = np.max(C.flatten())
+        SIG = S/SNR
+        C   = C + SIG*np.random.randn(*C.shape)
+        Clist.append(C)
+    return Clist, alpha, beta
+
+
+
 # Predict data
 def predicted_data_grid(data, A, S):
     """Predict data grid using X=AS^T
@@ -123,7 +158,7 @@ def Lookup_to_DataTable(DataList, alpha, beta, row_names=None, col_names=None):
 
 
 # ICA
-def perform_ica(A, S, approach='both'):
+def perform_ica(A, S, approach='both', return_ica=False):
     """Do a concat ICA at the end of the fitting process
 
     Parameters
@@ -147,7 +182,11 @@ def perform_ica(A, S, approach='both'):
     # rotate all matrices
     A = [ica.transform(a) for a in A]
     S = [ica.transform(s) for s in S]
-    return A, S
+
+    if return_ica:
+        return A, S, ica
+    else:
+        return A, S
 
 
 # VISUALISATION
@@ -184,7 +223,7 @@ def plot_data_grid(DataGrid):
 
     return fig
 
-def plot_data_fit(data_dict, A, S, data_complete=None):
+def plot_data_fit(data_dict, data_pred, data_complete=None):
 
     Domains    = list(data_dict.keys())
     Modalities = list(data_dict[Domains[0]].keys())
@@ -204,6 +243,6 @@ def plot_data_fit(data_dict, A, S, data_complete=None):
                 groudtruth = data_dict[d][m]
 
             c = '#4c72b0ff' if data_dict[d][m] is not None else '#dd8452ff'
-            axes[i, j].scatter(groudtruth, A[i]@S[j].T, c=c)
+            axes[i, j].scatter(groudtruth, data_pred[d][m], c=c)
             axes[i, j].axline((0, 0), slope=1, color='k')
     return fig
