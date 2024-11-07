@@ -69,10 +69,6 @@ def simulate_JointSVD(K, num_U, num_V, rank, SNR = 50):
         if (len(np.unique(alpha)) == num_U) & (len(np.unique(beta)) == num_V):
             valid = True
 
-
-    print(alpha)
-    print(beta)
-
     nrows = 100
 
     Ulist = [np.linalg.qr(np.random.randn(nrows,rank))[0] for _ in range(num_U)]
