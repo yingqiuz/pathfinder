@@ -127,6 +127,8 @@ def DataTable_to_Lookup(DataDict):
 
 def Lookup_to_DataTable(DataList, alpha, beta, row_names=None, col_names=None):
     """Produce Data Dictionary based on list and lookup (for backwards compatibility)
+
+    TODO: Check for situations where data share both row and col, in which case the dict won't work
     """
     DataDict = {}
     n_rows, n_cols = max(alpha)+1, max(beta)+1
