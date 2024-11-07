@@ -21,7 +21,7 @@ The above decompositions are ill-defined unless we add additional constraints on
 
 As we said earlier, some of the modalities might be missing in some of the domains/species. We define a mask $\mathcal{M}$ as the set of matrices that we do have access to, i.e. $\mathcal{M}=\left\{(d,m) \mid \mathbf{X_{d,m}} \text{ exists} \right\}$. 
 
-<img src="data/pf_table.png" width=150px">
+<img src="pathfinder/data/pf_table.png" width=150px">
 </img>
 
 Now we can write the overall loss function as:
@@ -38,7 +38,7 @@ The datasets may not necessarily be organised into a neat table of domains-by-mo
 
 The below diagram shows how a data table relates to a data graph:
 
-<img src="data/pf_table_v_graph.png" width=150px">
+<img src="data/pathfinder/pf_table_v_graph.png" width=150px">
 </img>
 
 Mathematically, we can re-write our matrix decompositions as:
