@@ -36,7 +36,8 @@ decomp.decomp(k) -> decomposition of matrix k
 from pathfinder import utils
 
 class JointOuterDecomp(object):
-    def __init__(self, n_components, n_iter=100, dropout=-1, alpha=1e-5, method=None, method_kwargs=None, do_ica=None):
+    def __init__(self, n_components, n_iter=100, dropout=-1, 
+                 alpha=1e-5, method=None, method_kwargs=None, do_ica=None, batch_size=None, learning_rate=None):
         """
 
         Parameters
@@ -48,6 +49,8 @@ class JointOuterDecomp(object):
         method : Regression method to use in sklearn (e.g. sklearn.linear_model.Ridge)
         method_kwargs : Keyword arguments to pass to sklearn method
         do_ica : Perform ICA rotation at the end. Can be 'rows', 'cols', or 'both'
+        batch_size (int or None): If None, use full batch updates, othewise use minibatch updates
+        learning_rate (float or None): only used if batch_size is not None
         """
 
         self.n_components = n_components
@@ -55,12 +58,18 @@ class JointOuterDecomp(object):
         self.dropout      = dropout
         self.alpha        = alpha
         self.do_ica       = do_ica
+        
+        # mini batch attributes
+        self.batch_size = batch_size
+        self.learning_rate = learning_rate
+        self._use_minibatch = (self.batch_size is not None)
+        
         assert self.dropout<1, 'dropout should be between 0 and 1'
         # sklearn method to use for matrix decomp
         # default = Ridge
         self.method       = method
         self.kwargs       = method_kwargs
-        if method is None:
+        if method is None and not self._use_minibatch:
             from sklearn.linear_model import Ridge
             self.method = Ridge
             self.kwargs = {'alpha':alpha}
@@ -168,8 +177,14 @@ class JointOuterDecomp(object):
         else:
             raise(Exception(f'Unrecognised mode={mode}'))
 
-
     def _update_A(self, Clist, p):
+        """Update p-th matrix A[p]"""
+        if self._use_minibatch:
+            self._update_A_minibatch(Clist, p)
+        else:
+            self._update_A_fullbatch(Clist, p)
+
+    def _update_A_fullbatch(self, Clist, p):
         """Update p-th matrix A[p]
         Concatenate horizontally all matrices in Clist where alpha[k]=p
         Also concatenate the corresponding S's
@@ -188,8 +203,55 @@ class JointOuterDecomp(object):
         self._A[p] = self.regress(concat_mat, concat_S.T, mode='left')
 
         return
-
+    
+    def _update_A_minibatch(self, Clist, p):
+        f"""Minibatch update for A[p] using closed-form solution
+        solves: A = C @ S @ (S^T@S + alpha*I)^{-1} by accumulating S^T @ S and C @ S in mini-batches
+        TODO: add support for full SGD?
+        """
+        indices = self._Alu[p]
+        if len(indices) == 0:
+            return
+        
+        nrows = Clist[indices[0]].shape[0]
+        n_components = self.n_components
+        
+        # solve A^T = (S^T @ S + alpha*I)^{-1} @ (S^T @ C^T)
+        S_gram = np.zeros((n_components, n_components)) # sum of S_k^T @ S_k
+        C_S = np.zeros((nrows, n_components)) # sum of C_k @ S_k
+        
+        # for each matrix that uses A[p]
+        for k in indices:
+            C_k = Clist[k]
+            S_k = self._S[self._beta[k]]
+            
+            # process columns in batches
+            n_cols = C_k.shape[1]
+            for col_start in range(0, n_cols, self.batch_size):
+                col_end = min(col_start + self.batch_size, n_cols)
+                C_batch = C_k[:, col_start:col_end] # (nrows, batch_size)
+                S_batch = S_k[col_start:col_end, :] # (batch_size, n_components)
+                S_gram += S_batch.T @ S_batch # (n_components, n_components)
+                C_S += C_batch @ S_batch # (nrows, n_components)
+        
+        #L2 regularisation        
+        S_gram += self.alpha * np.eye(n_components) 
+        
+        # solve A = C_S @ S_gram^{-1}
+        try:
+            self._A[p] = np.linalg.solve(S_gram, C_S.T).T
+        except np.linalg.LinAlgError:
+            print(f"Warning: Singular matrix in A update for mode {p}. Using pseudo-inverse instead.")
+            self._A[p] = C_S @ np.linalg.pinv(S_gram)
+            
     def _update_S(self, Clist, q):
+        """Update q-th matrix S[q]"""
+        if self._use_minibatch:
+            self._update_S_minibatch(Clist, q)
+        else:
+            self._update_S_fullbatch(Clist, q)
+
+    def _update_S_fullbatch(self, Clist, q):
         """Update q-th matrix S[p]
         Concatenate horizontally all matrices in Clist where beta[k]=p
         Also concatenate the corresponding A's
@@ -209,6 +271,44 @@ class JointOuterDecomp(object):
 
         return
 
+
+    def _update_S_minibatch(self, Clist, q):
+        """Minibatch update for S[q] using closed-form solution
+        solves: S = C^T @ A @ (A^T @ A + alpha*I)^{-1} accumulating A^T @ A and C^T @ A in mini-batches
+        """
+        indices = self._Slu[q]
+        if len(indices) == 0:
+            return
+        
+        ncols = Clist[indices[0]].shape[1]
+        n_components = self.n_components
+        
+        A_gram = np.zeros((n_components, n_components)) # sum of A_k^T @ A_k
+        CT_A = np.zeros((ncols, n_components)) # sum of C_k^T @ A_k
+        
+        # for each matrix that uses S[q]
+        for k in indices:
+            C_k = Clist[k]
+            A_k = self._A[self._alpha[k]]
+            
+            # process rows in batches
+            n_rows = C_k.shape[0]
+            for row_start in range(0, n_rows, self.batch_size):
+                row_end = min(row_start + self.batch_size, n_rows)
+                C_batch = C_k[row_start:row_end, :] # (batch_size, ncols)
+                A_batch = A_k[row_start:row_end, :] # (batch_size, n_components)
+                A_gram += A_batch.T @ A_batch # (n_components, n_components)
+                CT_A += C_batch.T @ A_batch # (ncols, n_components)
+                
+        #L2 regularisation
+        A_gram += self.alpha * np.eye(n_components)
+        
+        # solve S = CT_A @ A_gram^{-1}
+        try:
+            self._S[q] = np.linalg.solve(A_gram, CT_A.T).T
+        except np.linalg.LinAlgError:
+            print(f"Warning: Singular matrix in S update for mode {q}. Using pseudo-inverse instead.")
+            self._S[q] = CT_A @ np.linalg.pinv(A_gram)
 
     def calc_loss(self, Clist):
         """Calculate fitting error norm(Data - AS')
