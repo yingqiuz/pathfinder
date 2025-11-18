@@ -24,7 +24,7 @@ def test_JointDecomp():
     assert len(algo._S) == 2
     assert len(algo.predict())==len(data)
     # test with minibatch updates
-    algo = decomp.JointOuterDecomp(n_components=5, n_iter=3, dropout=-1, method=Ridge, method_kwargs={'alpha':1e3}, batch_size=10)
+    algo = decomp.JointOuterDecomp(n_components=5, n_iter=3, dropout=-1, method=Ridge, method_kwargs={'alpha':1e3}, batch_size=3)
     algo.fit(data, alpha, beta)
     assert len(algo._A) == 3
     assert len(algo._S) == 2

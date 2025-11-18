@@ -10,7 +10,7 @@
 import numpy as np
 from tqdm import tqdm
 from scipy.sparse.linalg import svds
-from scipy.linalg import qr
+from scipy.linalg import qr, svd
 
 """ Decomposition classes - Interface
 
@@ -404,7 +404,7 @@ class JointOuterDecomp(object):
 
 # ANOTHER DECOMPOSITION APPROACH : JointSVD
 class JointSVD(object):
-    def __init__(self, n_components, n_iter=10, do_ica=None):
+    def __init__(self, n_components, n_iter=10, do_ica=None, batch_size=None, n_power_iter=2):
         """Joint Singular Value Decomposition
 
         Given set of matrices C1, ..., CK, performs a joint SVD such that:
@@ -423,6 +423,10 @@ class JointSVD(object):
         self._ncomp  = n_components
         self._niter  = n_iter
         self._do_ica = do_ica
+        self.batch_size = batch_size
+        self.n_power_iter = n_power_iter
+        self._use_minibatch = (self.batch_size is not None)
+        
         self._K      = None
         self._P      = None
         self._Q      = None
@@ -499,6 +503,13 @@ class JointSVD(object):
 
 
     def _updateU(self, Clist, p):
+        """Update p-th matrix U[p]"""
+        if self._use_minibatch:
+            self._updateU_minibatch(Clist, p)
+        else:
+            self._updateU_fullbatch(Clist, p)
+
+    def _updateU_fullbatch(self, Clist, p):
         # Un is main eigenvector of Mn(V)
         U = []
         for n in range(self._ncomp):
@@ -518,9 +529,53 @@ class JointSVD(object):
         U = np.asarray(U).T
         # orthogonalise U
         self._Ulist[p] = qr(U, mode='economic')[0]
+        
+    def _updateU_minibatch(self, Clist, p):
+        """Mini-batch update by sampling across matrices"""
+        indices = self._Ulu[p]
+        if len(indices) == 0:
+            return
+        
+        nrows = Clist[indices[0]].shape[0]
+        U_new = []
+        
+        for n in range(self._ncomp):
+            # Sample a subset of matrices if we have more than batch_size
+            if len(indices) > self.batch_size:
+                batch_indices = np.random.choice(indices, self.batch_size, replace=False)
+            else:
+                batch_indices = indices
+            
+            # build MV matrix from sampled matrices
+            MV = []
+            for k in batch_indices:
+                C = Clist[k]
+                v = self._Vlist[self._beta[k]][:, n]
+                MV.append(C @ v)
+            
+            MV = np.asarray(MV).T  # shape (nrows, n_sampled_matrices)
+            
+            # extract dominant eigenvector
+            if MV.shape[1] > 1:
+                u = svds(MV, k=1)[0].flatten()
+            else:
+                u = MV.flatten() / np.linalg.norm(MV)
+            
+            U_new.append(u)
+        
+        U_new = np.asarray(U_new).T
+        # orthogonalise
+        self._Ulist[p] = qr(U_new, mode='economic')[0]
 
 
     def _updateV(self, Clist, q):
+        """Update q-th matrix V[q]"""
+        if self._use_minibatch:
+            self._updateV_minibatch(Clist, q)
+        else:
+            self._updateV_fullbatch(Clist, q)
+
+    def _updateV_fullbatch(self, Clist, q):
         # Vn is main eigenvector of Mn(U)
         V = []
         for n in range(self._ncomp):
@@ -541,6 +596,41 @@ class JointSVD(object):
         # orthogonalise V
         self._Vlist[q] = qr(V, mode='economic')[0]
 
+    def _updateV_minibatch(self, Clist, q):
+        """Mini-batch update by sampling across matrices"""
+        indices = self._Vlu[q]
+        if len(indices) == 0:
+            return
+        
+        ncols = Clist[indices[0]].shape[1]
+        V_new = []
+        
+        for n in range(self._ncomp):
+            # sample a subset of matrices if we have more than batch_size
+            if len(indices) > self.batch_size:
+                batch_indices = np.random.choice(indices, self.batch_size, replace=False)
+            else:
+                batch_indices = indices
+            
+            # build MU matrix
+            MU = []
+            for k in batch_indices:
+                C = Clist[k]
+                u = self._Ulist[self._alpha[k]][:, n]
+                MU.append(C.T @ u)
+            
+            MU = np.asarray(MU).T  # shape (ncols, n_sampled_matrices)
+            
+            #  dominant eigenvector
+            if MU.shape[1] > 1:
+                v = svds(MU, k=1)[0].flatten()
+            else:
+                v = MU.flatten() / np.linalg.norm(MU)
+            
+            V_new.append(v)
+        
+        V_new = np.asarray(V_new).T
+        self._Vlist[q] = qr(V_new, mode='economic')[0]
 
     def predict(self, k=None, as_dict=False):
         if k is None:
