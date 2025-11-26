@@ -39,4 +39,10 @@ def test_JointSVD():
     assert len(algo._Vlist) == 2
     assert len(algo.predict()) == len(data)
 
+    # test with minibatch updates
+    algo = decomp.JointSVD(n_components=5, n_iter=3, batch_size=3)
+    algo.fit(data, alpha, beta)
+    assert len(algo._Ulist) == 3
+    assert len(algo._Vlist) == 2
+    assert len(algo.predict()) == len(data)
 
