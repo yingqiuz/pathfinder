@@ -505,7 +505,7 @@ class JointSVD(object):
     def _updateU(self, Clist, p):
         """Update p-th matrix U[p]"""
         if self._use_minibatch:
-            self._updateU_minibatch(Clist, p)
+            self._updateU_minibatch_randomised(Clist, p)
         else:
             self._updateU_fullbatch(Clist, p)
 
@@ -566,12 +566,59 @@ class JointSVD(object):
         U_new = np.asarray(U_new).T
         # orthogonalise
         self._Ulist[p] = qr(U_new, mode='economic')[0]
-
+        
+    def _updateU_minibatch_randomised(self, Clist, p):
+        """chunck rows within matrices"""
+        indices = self._Ulu[p]
+        if len(indices) == 0:
+            return
+        
+        nrows = Clist[indices[0]].shape[0]
+        U_new = []
+        
+        for n in range(self._ncomp):
+            # Sample subset of matrices
+            if len(indices) > self.batch_size:
+                batch_indices = np.random.choice(indices, self.batch_size, replace=False)
+            else:
+                batch_indices = indices
+            
+            # randomised power iteration to find dominant eigenvector
+            # this only requires matrix-vector products, which can be done in chunks
+            u = np.random.randn(nrows)
+            u = u / np.linalg.norm(u)
+            
+            for _ in range(self.n_power_iter):
+                # Compute M @ M^T @ u without forming M explicitly
+                # M @ M^T @ u = sum_k (C_k @ v_k) @ (C_k @ v_k)^T @ u
+                MMT_u = np.zeros(nrows)
+                
+                for k in batch_indices:
+                    C = Clist[k]
+                    v = self._Vlist[self._beta[k]][:, n]
+                    
+                    # process in row batches
+                    Cv = np.zeros(nrows)
+                    for row_start in range(0, nrows, self.batch_size):
+                        row_end = min(row_start + self.batch_size, nrows)
+                        Cv[row_start:row_end] = C[row_start:row_end, :] @ v
+                    
+                    # (C@v) @ (C@v)^T @ u = (C@v) * dot(C@v, u)
+                    weight = np.dot(Cv, u)
+                    MMT_u += Cv * weight
+                
+                if np.linalg.norm(MMT_u) > 1e-10:
+                    u = MMT_u / np.linalg.norm(MMT_u)
+            
+            U_new.append(u)
+        
+        U_new = np.asarray(U_new).T
+        self._Ulist[p] = qr(U_new, mode='economic')[0]
 
     def _updateV(self, Clist, q):
         """Update q-th matrix V[q]"""
         if self._use_minibatch:
-            self._updateV_minibatch(Clist, q)
+            self._updateV_minibatch_randomised(Clist, q)
         else:
             self._updateV_fullbatch(Clist, q)
 
@@ -646,6 +693,50 @@ class JointSVD(object):
             V = self._Vlist[ self._beta[k] ]
             return U@np.diag(self._Dlist[k])@V.T
 
+    def _updateV_minibatch_randomised(self, Clist, q):
+        """ chunk columns within matrices"""
+        indices = self._Vlu[q]
+        if len(indices) == 0:
+            return
+        
+        ncols = Clist[indices[0]].shape[1]
+        V_new = []
+        
+        for n in range(self._ncomp):
+            # sample subset of matrices (if batch_size specified)
+            if len(indices) > self.batch_size:
+                batch_indices = np.random.choice(indices, self.batch_size, replace=False)
+            else:
+                batch_indices = indices
+            
+            # power iteration with column chunking
+            v = np.random.randn(ncols)
+            v = v / np.linalg.norm(v)
+            
+            for _ in range(self.n_power_iter):
+                MTM_v = np.zeros(ncols)
+                
+                for k in batch_indices:
+                    C = Clist[k]
+                    u = self._Ulist[self._alpha[k]][:, n]
+                    
+                    # process in column batches
+                    CTu = np.zeros(ncols)
+                    for col_start in range(0, ncols, self.batch_size):
+                        col_end = min(col_start + self.batch_size, ncols)
+                        CTu[col_start:col_end] = C[:, col_start:col_end].T @ u
+                    
+                    weight = np.dot(CTu, v)
+                    MTM_v += CTu * weight
+
+                
+                if np.linalg.norm(MTM_v) > 1e-10:
+                    v = MTM_v / np.linalg.norm(MTM_v)
+            
+            V_new.append(v)
+        
+        V_new = np.asarray(V_new).T
+        self._Vlist[q] = qr(V_new, mode='economic')[0]
 
     def decomp(self, k):
         """Get USV for a given input matrix from list
