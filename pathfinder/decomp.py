@@ -11,6 +11,8 @@ import numpy as np
 from tqdm import tqdm
 from scipy.sparse.linalg import svds
 from scipy.linalg import qr, svd
+from multiprocessing import Pool, cpu_count
+from functools import partial
 
 """ Decomposition classes - Interface
 
@@ -37,7 +39,8 @@ from pathfinder import utils
 
 class JointOuterDecomp(object):
     def __init__(self, n_components, n_iter=100, dropout=-1, 
-                 alpha=1e-5, method=None, method_kwargs=None, do_ica=None, batch_size=None, learning_rate=None):
+                 alpha=1e-5, method=None, method_kwargs=None, do_ica=None, 
+                 batch_size=None, learning_rate=None, n_jobs=None):
         """
 
         Parameters
@@ -51,6 +54,7 @@ class JointOuterDecomp(object):
         do_ica : Perform ICA rotation at the end. Can be 'rows', 'cols', or 'both'
         batch_size (int or None): If None, use full batch updates, othewise use minibatch updates
         learning_rate (float or None): only used if batch_size is not None
+        n_jobs (int or None): number of jobs to run in parallel. If None, use all available cores
         """
 
         self.n_components = n_components
@@ -63,6 +67,16 @@ class JointOuterDecomp(object):
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self._use_minibatch = (self.batch_size is not None)
+
+        # Parallel processing setup
+        self.n_jobs = n_jobs
+        if n_jobs == -1:
+            self.n_jobs = cpu_count()
+        
+        if self.n_jobs is None:
+            self.n_jobs = 1
+
+        self._use_parallel = (self.n_jobs > 1 and self._use_minibatch)        
         
         assert self.dropout<1, 'dropout should be between 0 and 1'
         # sklearn method to use for matrix decomp
@@ -135,8 +149,6 @@ class JointOuterDecomp(object):
             ncols = Clist[ self._Slu[q][0] ].shape[1]
             self._S[q] = np.random.randn(ncols, self.n_components)
 
-
-
     def regress(self, M, X, mode):
         """
         M (2D-array)
@@ -205,9 +217,12 @@ class JointOuterDecomp(object):
         return
     
     def _update_A_minibatch(self, Clist, p):
-        f"""Minibatch update for A[p] using closed-form solution
-        solves: A = C @ S @ (S^T@S + alpha*I)^{-1} by accumulating S^T @ S and C @ S in mini-batches
-        TODO: add support for full SGD?
+        """Minibatch update for A[p] using closed-form solution
+        
+        Solves: A = C @ S @ (S^T@S + alpha*I)^{-1} 
+        by accumulating S^T @ S and C @ S in mini-batches
+        
+        Supports parallel processing when n_jobs > 1
         """
         indices = self._Alu[p]
         if len(indices) == 0:
@@ -216,32 +231,57 @@ class JointOuterDecomp(object):
         nrows = Clist[indices[0]].shape[0]
         n_components = self.n_components
         
+        # Initialize accumulators
         # solve A^T = (S^T @ S + alpha*I)^{-1} @ (S^T @ C^T)
-        S_gram = np.zeros((n_components, n_components)) # sum of S_k^T @ S_k
-        C_S = np.zeros((nrows, n_components)) # sum of C_k @ S_k
+        S_gram = np.zeros((n_components, n_components))  # sum of S_k^T @ S_k
+        C_S = np.zeros((nrows, n_components))  # sum of C_k @ S_k
         
-        # for each matrix that uses A[p]
-        for k in indices:
-            C_k = Clist[k]
-            S_k = self._S[self._beta[k]]
+        if self._use_parallel:
+            # PARALLEL VERSION
+            # Create list of batch tasks
+            batch_tasks = []
+            for k in indices:
+                C_k = Clist[k]
+                S_k = self._S[self._beta[k]]
+                n_cols = C_k.shape[1]
+                
+                for col_start in range(0, n_cols, self.batch_size):
+                    col_end = min(col_start + self.batch_size, n_cols)
+                    batch_tasks.append((k, C_k, S_k, col_start, col_end))
             
-            # process columns in batches
-            n_cols = C_k.shape[1]
-            for col_start in range(0, n_cols, self.batch_size):
-                col_end = min(col_start + self.batch_size, n_cols)
-                C_batch = C_k[:, col_start:col_end] # (nrows, batch_size)
-                S_batch = S_k[col_start:col_end, :] # (batch_size, n_components)
-                S_gram += S_batch.T @ S_batch # (n_components, n_components)
-                C_S += C_batch @ S_batch # (nrows, n_components)
+            # Process batches in parallel
+            with Pool(processes=self.n_jobs) as pool:
+                results = pool.map(_process_A_batch, batch_tasks)
+            
+            # Accumulate results
+            for S_gram_batch, C_S_batch in results:
+                S_gram += S_gram_batch
+                C_S += C_S_batch
         
-        #L2 regularisation        
-        S_gram += self.alpha * np.eye(n_components) 
+        else:
+            # SEQUENTIAL VERSION (original)
+            for k in indices:
+                C_k = Clist[k]
+                S_k = self._S[self._beta[k]]
+                
+                # Process columns in batches
+                n_cols = C_k.shape[1]
+                for col_start in range(0, n_cols, self.batch_size):
+                    col_end = min(col_start + self.batch_size, n_cols)
+                    C_batch = C_k[:, col_start:col_end]  # (nrows, batch_size)
+                    S_batch = S_k[col_start:col_end, :]  # (batch_size, n_components)
+                    S_gram += S_batch.T @ S_batch  # (n_components, n_components)
+                    C_S += C_batch @ S_batch  # (nrows, n_components)
         
-        # solve A = C_S @ S_gram^{-1}
+        # L2 regularization        
+        S_gram += self.alpha * np.eye(n_components)
+        
+        # Solve A = C_S @ S_gram^{-1}
         try:
             self._A[p] = np.linalg.solve(S_gram, C_S.T).T
         except np.linalg.LinAlgError:
-            print(f"Warning: Singular matrix in A update for mode {p}. Using pseudo-inverse instead.")
+            print(f"Warning: Singular matrix in A update for mode {p}. "
+                  f"Using pseudo-inverse instead.")
             self._A[p] = C_S @ np.linalg.pinv(S_gram)
             
     def _update_S(self, Clist, q):
@@ -271,10 +311,13 @@ class JointOuterDecomp(object):
 
         return
 
-
     def _update_S_minibatch(self, Clist, q):
         """Minibatch update for S[q] using closed-form solution
-        solves: S = C^T @ A @ (A^T @ A + alpha*I)^{-1} accumulating A^T @ A and C^T @ A in mini-batches
+        
+        Solves: S = C^T @ A @ (A^T @ A + alpha*I)^{-1} 
+        accumulating A^T @ A and C^T @ A in mini-batches
+        
+        Supports parallel processing when n_jobs > 1
         """
         indices = self._Slu[q]
         if len(indices) == 0:
@@ -283,31 +326,56 @@ class JointOuterDecomp(object):
         ncols = Clist[indices[0]].shape[1]
         n_components = self.n_components
         
-        A_gram = np.zeros((n_components, n_components)) # sum of A_k^T @ A_k
-        CT_A = np.zeros((ncols, n_components)) # sum of C_k^T @ A_k
+        # Initialize accumulators
+        A_gram = np.zeros((n_components, n_components))  # sum of A_k^T @ A_k
+        CT_A = np.zeros((ncols, n_components))  # sum of C_k^T @ A_k
         
-        # for each matrix that uses S[q]
-        for k in indices:
-            C_k = Clist[k]
-            A_k = self._A[self._alpha[k]]
-            
-            # process rows in batches
-            n_rows = C_k.shape[0]
-            for row_start in range(0, n_rows, self.batch_size):
-                row_end = min(row_start + self.batch_size, n_rows)
-                C_batch = C_k[row_start:row_end, :] # (batch_size, ncols)
-                A_batch = A_k[row_start:row_end, :] # (batch_size, n_components)
-                A_gram += A_batch.T @ A_batch # (n_components, n_components)
-                CT_A += C_batch.T @ A_batch # (ncols, n_components)
+        if self._use_parallel:
+            # PARALLEL VERSION
+            # Create list of batch tasks
+            batch_tasks = []
+            for k in indices:
+                C_k = Clist[k]
+                A_k = self._A[self._alpha[k]]
+                n_rows = C_k.shape[0]
                 
-        #L2 regularisation
+                for row_start in range(0, n_rows, self.batch_size):
+                    row_end = min(row_start + self.batch_size, n_rows)
+                    batch_tasks.append((k, C_k, A_k, row_start, row_end))
+            
+            # Process batches in parallel
+            with Pool(processes=self.n_jobs) as pool:
+                results = pool.map(_process_S_batch, batch_tasks)
+            
+            # Accumulate results
+            for A_gram_batch, CT_A_batch in results:
+                A_gram += A_gram_batch
+                CT_A += CT_A_batch
+        
+        else:
+            # SEQUENTIAL VERSION (original)
+            for k in indices:
+                C_k = Clist[k]
+                A_k = self._A[self._alpha[k]]
+                
+                # Process rows in batches
+                n_rows = C_k.shape[0]
+                for row_start in range(0, n_rows, self.batch_size):
+                    row_end = min(row_start + self.batch_size, n_rows)
+                    C_batch = C_k[row_start:row_end, :]  # (batch_size, ncols)
+                    A_batch = A_k[row_start:row_end, :]  # (batch_size, n_components)
+                    A_gram += A_batch.T @ A_batch  # (n_components, n_components)
+                    CT_A += C_batch.T @ A_batch  # (ncols, n_components)
+        
+        # L2 regularization
         A_gram += self.alpha * np.eye(n_components)
         
-        # solve S = CT_A @ A_gram^{-1}
+        # Solve S = CT_A @ A_gram^{-1}
         try:
             self._S[q] = np.linalg.solve(A_gram, CT_A.T).T
         except np.linalg.LinAlgError:
-            print(f"Warning: Singular matrix in S update for mode {q}. Using pseudo-inverse instead.")
+            print(f"Warning: Singular matrix in S update for mode {q}. "
+                  f"Using pseudo-inverse instead.")
             self._S[q] = CT_A @ np.linalg.pinv(A_gram)
 
     def calc_loss(self, Clist):
@@ -736,3 +804,52 @@ class JointSVD(object):
             # Need to do something with the D's otherwise predict() doesn't work
             # NEED TO FIX THIS AND WRITE A TEST
 
+def _process_A_batch(args):
+    """Worker function for parallel A update
+    
+    Parameters
+    ----------
+    args : tuple
+        (k, C_k, S_k, col_start, col_end)
+    
+    Returns
+    -------
+    S_gram_batch : ndarray
+        Contribution to S^T @ S from this batch
+    C_S_batch : ndarray
+        Contribution to C @ S from this batch
+    """
+    k, C_k, S_k, col_start, col_end = args
+    
+    C_batch = C_k[:, col_start:col_end]  # (nrows, batch_size)
+    S_batch = S_k[col_start:col_end, :]  # (batch_size, n_components)
+    
+    S_gram_batch = S_batch.T @ S_batch  # (n_components, n_components)
+    C_S_batch = C_batch @ S_batch  # (nrows, n_components)
+    
+    return S_gram_batch, C_S_batch
+
+def _process_S_batch(args):
+    """Worker function for parallel S update
+    
+    Parameters
+    ----------
+    args : tuple
+        (k, C_k, A_k, row_start, row_end)
+    
+    Returns
+    -------
+    A_gram_batch : ndarray
+        Contribution to A^T @ A from this batch
+    CT_A_batch : ndarray
+        Contribution to C^T @ A from this batch
+    """
+    k, C_k, A_k, row_start, row_end = args
+    
+    C_batch = C_k[row_start:row_end, :]  # (batch_size, ncols)
+    A_batch = A_k[row_start:row_end, :]  # (batch_size, n_components)
+    
+    A_gram_batch = A_batch.T @ A_batch  # (n_components, n_components)
+    CT_A_batch = C_batch.T @ A_batch  # (ncols, n_components)
+    
+    return A_gram_batch, CT_A_batch
