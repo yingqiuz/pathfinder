@@ -505,7 +505,7 @@ class JointSVD(object):
     def _updateU(self, Clist, p):
         """Update p-th matrix U[p]"""
         if self._use_minibatch:
-            self._updateU_minibatch_randomised(Clist, p)
+            self._updateU_minibatch(Clist, p)
         else:
             self._updateU_fullbatch(Clist, p)
 
@@ -531,43 +531,6 @@ class JointSVD(object):
         self._Ulist[p] = qr(U, mode='economic')[0]
         
     def _updateU_minibatch(self, Clist, p):
-        """Mini-batch update by sampling across matrices"""
-        indices = self._Ulu[p]
-        if len(indices) == 0:
-            return
-        
-        nrows = Clist[indices[0]].shape[0]
-        U_new = []
-        
-        for n in range(self._ncomp):
-            # Sample a subset of matrices if we have more than batch_size
-            if len(indices) > self.batch_size:
-                batch_indices = np.random.choice(indices, self.batch_size, replace=False)
-            else:
-                batch_indices = indices
-            
-            # build MV matrix from sampled matrices
-            MV = []
-            for k in batch_indices:
-                C = Clist[k]
-                v = self._Vlist[self._beta[k]][:, n]
-                MV.append(C @ v)
-            
-            MV = np.asarray(MV).T  # shape (nrows, n_sampled_matrices)
-            
-            # extract dominant eigenvector
-            if MV.shape[1] > 1:
-                u = svds(MV, k=1)[0].flatten()
-            else:
-                u = MV.flatten() / np.linalg.norm(MV)
-            
-            U_new.append(u)
-        
-        U_new = np.asarray(U_new).T
-        # orthogonalise
-        self._Ulist[p] = qr(U_new, mode='economic')[0]
-        
-    def _updateU_minibatch_randomised(self, Clist, p):
         """chunck rows within matrices"""
         indices = self._Ulu[p]
         if len(indices) == 0:
@@ -618,7 +581,7 @@ class JointSVD(object):
     def _updateV(self, Clist, q):
         """Update q-th matrix V[q]"""
         if self._use_minibatch:
-            self._updateV_minibatch_randomised(Clist, q)
+            self._updateV_minibatch(Clist, q)
         else:
             self._updateV_fullbatch(Clist, q)
 
@@ -643,42 +606,6 @@ class JointSVD(object):
         # orthogonalise V
         self._Vlist[q] = qr(V, mode='economic')[0]
 
-    def _updateV_minibatch(self, Clist, q):
-        """Mini-batch update by sampling across matrices"""
-        indices = self._Vlu[q]
-        if len(indices) == 0:
-            return
-        
-        ncols = Clist[indices[0]].shape[1]
-        V_new = []
-        
-        for n in range(self._ncomp):
-            # sample a subset of matrices if we have more than batch_size
-            if len(indices) > self.batch_size:
-                batch_indices = np.random.choice(indices, self.batch_size, replace=False)
-            else:
-                batch_indices = indices
-            
-            # build MU matrix
-            MU = []
-            for k in batch_indices:
-                C = Clist[k]
-                u = self._Ulist[self._alpha[k]][:, n]
-                MU.append(C.T @ u)
-            
-            MU = np.asarray(MU).T  # shape (ncols, n_sampled_matrices)
-            
-            #  dominant eigenvector
-            if MU.shape[1] > 1:
-                v = svds(MU, k=1)[0].flatten()
-            else:
-                v = MU.flatten() / np.linalg.norm(MU)
-            
-            V_new.append(v)
-        
-        V_new = np.asarray(V_new).T
-        self._Vlist[q] = qr(V_new, mode='economic')[0]
-
     def predict(self, k=None, as_dict=False):
         if k is None:
             Cpred = [self.predict(k) for k in range(self._K)]
@@ -693,7 +620,7 @@ class JointSVD(object):
             V = self._Vlist[ self._beta[k] ]
             return U@np.diag(self._Dlist[k])@V.T
 
-    def _updateV_minibatch_randomised(self, Clist, q):
+    def _updateV_minibatch(self, Clist, q):
         """ chunk columns within matrices"""
         indices = self._Vlu[q]
         if len(indices) == 0:
