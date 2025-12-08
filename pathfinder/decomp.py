@@ -135,8 +135,6 @@ class JointOuterDecomp(object):
             ncols = Clist[ self._Slu[q][0] ].shape[1]
             self._S[q] = np.random.randn(ncols, self.n_components)
 
-
-
     def regress(self, M, X, mode):
         """
         M (2D-array)
@@ -340,7 +338,7 @@ class JointOuterDecomp(object):
             S = self._S[ self._beta[k] ]
             return A@S.T
 
-    def fit(self, Clist, alpha=None, beta=None):
+    def fit(self, Clist, alpha=None, beta=None, random_update=None):
         """Fit list of matrices
 
         Clist : list of 2D arrays
@@ -386,10 +384,19 @@ class JointOuterDecomp(object):
         # begin loop
         loss = [self.calc_loss(Clist)]
         for _ in tqdm(range(self.n_iter)):
-            for p in range(self._P):
-                self._update_A(Clist, p)
-            for q in range(self._Q):
-                self._update_S(Clist, q)
+            if not random_update:
+                # update all A and S matrices in each iteration
+                for p in range(self._P):
+                    self._update_A(Clist, p)
+                for q in range(self._Q):
+                    self._update_S(Clist, q)
+            else:
+                # randomly select a subset of p and q to update
+                for p in np.random.choice(self._P, size=random_update, replace=False):
+                    self._update_A(Clist, p)
+                for q in np.random.choice(self._Q, size=random_update, replace=False):
+                    self._update_S(Clist, q)
+                
             loss.append(self.calc_loss(Clist))
 
         # Do ICA at the end?
