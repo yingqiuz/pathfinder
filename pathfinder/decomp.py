@@ -392,9 +392,9 @@ class JointOuterDecomp(object):
                     self._update_S(Clist, q)
             else:
                 # randomly select a subset of p and q to update
-                for p in np.random.choice(self._P, size=random_update, replace=False):
+                for p in np.random.choice(self._P, size=np.floor(self._P * random_update), replace=False):
                     self._update_A(Clist, p)
-                for q in np.random.choice(self._Q, size=random_update, replace=False):
+                for q in np.random.choice(self._Q, size=np.floor(self._Q * random_update), replace=False):
                     self._update_S(Clist, q)
                 
             loss.append(self.calc_loss(Clist))
