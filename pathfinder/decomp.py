@@ -728,7 +728,7 @@ class JointSVD(object):
         self._loss = np.zeros((self._niter+1, self._K))
         self._loss[0,:] = [ np.linalg.norm(C-Cpred) for C,Cpred in zip(Clist,self.predict()) ]
         # Main algorithm
-        for it in tqdm(range(self._niter), disable=not self.verbose):
+        for it in tqdm(range(self._niter)):
             # Update U
             for p in range(self._P):
                 self._updateU(Clist, p)
