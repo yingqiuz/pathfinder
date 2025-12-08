@@ -38,7 +38,7 @@ from pathfinder import utils
 class JointOuterDecomp(object):
     def __init__(self, n_components, n_iter=100, dropout=-1, 
                  alpha=1e-5, method=None, method_kwargs=None, do_ica=None, 
-                 batch_size=None, learning_rate=None, random_update=None):
+                 batch_size=None, learning_rate=None, random_update=None, verbose=True):
         """
 
         Parameters
@@ -728,7 +728,7 @@ class JointSVD(object):
         self._loss = np.zeros((self._niter+1, self._K))
         self._loss[0,:] = [ np.linalg.norm(C-Cpred) for C,Cpred in zip(Clist,self.predict()) ]
         # Main algorithm
-        for it in range(self._niter):
+        for it in tqdm(range(self._niter), disable=not self.verbose):
             # Update U
             for p in range(self._P):
                 self._updateU(Clist, p)
