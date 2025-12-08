@@ -38,6 +38,13 @@ def test_JointDecomp():
     assert len(algo._S) == 2
     assert len(algo.decomp(0))==2
     assert type(algo.predict(as_dict=True)) == dict
+    # test random updates
+    algo = decomp.JointOuterDecomp(n_components=5, n_iter=3, dropout=-1, method=Ridge, method_kwargs={'alpha':1e3}, random_update=0.5)
+    algo.fit(data)
+    assert len(algo._A) == 3
+    assert len(algo._S) == 2
+    assert len(algo.decomp(0))==2
+    assert type(algo.predict(as_dict=True)) == dict
 
 def test_JointDecomp_ICA():
     data = utils.simulate_data_grid(num_domains=3, num_modalities=2)

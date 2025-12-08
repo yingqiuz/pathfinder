@@ -37,7 +37,8 @@ from pathfinder import utils
 
 class JointOuterDecomp(object):
     def __init__(self, n_components, n_iter=100, dropout=-1, 
-                 alpha=1e-5, method=None, method_kwargs=None, do_ica=None, batch_size=None, learning_rate=None):
+                 alpha=1e-5, method=None, method_kwargs=None, do_ica=None, 
+                 batch_size=None, learning_rate=None, random_update=None):
         """
 
         Parameters
@@ -51,6 +52,7 @@ class JointOuterDecomp(object):
         do_ica : Perform ICA rotation at the end. Can be 'rows', 'cols', or 'both'
         batch_size (int or None): If None, use full batch updates, othewise use minibatch updates
         learning_rate (float or None): only used if batch_size is not None
+        random_update (float or None): fraction of p and q to update randomly in each iteration. If None, update all p and q in each iteration
         """
 
         self.n_components = n_components
@@ -63,6 +65,7 @@ class JointOuterDecomp(object):
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self._use_minibatch = (self.batch_size is not None)
+        self.random_update = random_update
         
         assert self.dropout<1, 'dropout should be between 0 and 1'
         # sklearn method to use for matrix decomp
@@ -338,7 +341,7 @@ class JointOuterDecomp(object):
             S = self._S[ self._beta[k] ]
             return A@S.T
 
-    def fit(self, Clist, alpha=None, beta=None, random_update=None):
+    def fit(self, Clist, alpha=None, beta=None):
         """Fit list of matrices
 
         Clist : list of 2D arrays
@@ -384,7 +387,7 @@ class JointOuterDecomp(object):
         # begin loop
         loss = [self.calc_loss(Clist)]
         for _ in tqdm(range(self.n_iter)):
-            if not random_update:
+            if not self.random_update:
                 # update all A and S matrices in each iteration
                 for p in range(self._P):
                     self._update_A(Clist, p)
@@ -392,9 +395,9 @@ class JointOuterDecomp(object):
                     self._update_S(Clist, q)
             else:
                 # randomly select a subset of p and q to update
-                for p in np.random.choice(self._P, size=np.floor(self._P * random_update), replace=False):
+                for p in np.random.choice(self._P, size=int(self._P * self.random_update), replace=False):
                     self._update_A(Clist, p)
-                for q in np.random.choice(self._Q, size=np.floor(self._Q * random_update), replace=False):
+                for q in np.random.choice(self._Q, size=int(self._Q * self.random_update), replace=False):
                     self._update_S(Clist, q)
                 
             loss.append(self.calc_loss(Clist))
