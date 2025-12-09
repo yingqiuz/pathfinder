@@ -341,7 +341,7 @@ class JointOuterDecomp(object):
             S = self._S[ self._beta[k] ]
             return A@S.T
 
-    def fit(self, Clist, alpha=None, beta=None):
+    def fit(self, Clist, alpha=None, beta=None, initial_state=None):
         """Fit list of matrices
 
         Clist : list of 2D arrays
@@ -382,7 +382,14 @@ class JointOuterDecomp(object):
         self._check_dimensions(Clist)
 
         # run the algorithm
-        self.init(Clist)
+        if initial_state is None:
+            self.init(Clist)
+        else:
+            # check the dimension of the initial state
+            assert initial_state['A'].shape == (self._P, self._n_components), 'Initial A has incorrect shape'
+            assert initial_state['S'].shape == (self._Q, self._n_components), 'Initial S has incorrect shape'
+            self._A = initial_state['A']
+            self._S = initial_state['S']
 
         # begin loop
         loss = [self.calc_loss(Clist)]
@@ -408,9 +415,6 @@ class JointOuterDecomp(object):
 
         # store loss
         self._loss = loss
-
-
-
 
 # ANOTHER DECOMPOSITION APPROACH : JointSVD
 class JointSVD(object):
