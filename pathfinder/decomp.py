@@ -386,8 +386,8 @@ class JointOuterDecomp(object):
             self.init(Clist)
         else:
             # check the dimension of the initial state
-            assert initial_state['A'].shape == (self._P, self._n_components), 'Initial A has incorrect shape'
-            assert initial_state['S'].shape == (self._Q, self._n_components), 'Initial S has incorrect shape'
+            assert len(initial_state['A']) == self._P, 'Initial A has incorrect shape'
+            assert len(initial_state['S']) == self._Q, 'Initial S has incorrect shape'
             self._A = initial_state['A']
             self._S = initial_state['S']
 
@@ -396,16 +396,16 @@ class JointOuterDecomp(object):
         for _ in tqdm(range(self.n_iter)):
             if not self.random_update:
                 # update all A and S matrices in each iteration
-                for p in range(self._P):
-                    self._update_A(Clist, p)
                 for q in range(self._Q):
                     self._update_S(Clist, q)
+                for p in range(self._P):
+                    self._update_A(Clist, p)
             else:
                 # randomly select a subset of p and q to update
-                for p in np.random.choice(self._P, size=int(self._P * self.random_update), replace=False):
-                    self._update_A(Clist, p)
                 for q in np.random.choice(self._Q, size=int(self._Q * self.random_update), replace=False):
                     self._update_S(Clist, q)
+                for p in np.random.choice(self._P, size=int(self._P * self.random_update), replace=False):
+                    self._update_A(Clist, p)
                 
             loss.append(self.calc_loss(Clist))
 
