@@ -38,7 +38,8 @@ from pathfinder import utils
 class JointOuterDecomp(object):
     def __init__(self, n_components, n_iter=100, dropout=-1, 
                  alpha=1e-5, method=None, method_kwargs=None, do_ica=None, 
-                 batch_size=None, learning_rate=None, random_update=None, verbose=True):
+                 batch_size=None, learning_rate=None, random_update=None, 
+                 init_type='svd', verbose=True):
         """
 
         Parameters
@@ -53,6 +54,8 @@ class JointOuterDecomp(object):
         batch_size (int or None): If None, use full batch updates, othewise use minibatch updates
         learning_rate (float or None): only used if batch_size is not None
         random_update (float or None): fraction of p and q to update randomly in each iteration. If None, update all p and q in each iteration
+        init_type (str) : type of initialisation. Can be 'random' or 'svd'
+        verbose (bool) : whether to print progress
         """
 
         self.n_components = n_components
@@ -66,6 +69,7 @@ class JointOuterDecomp(object):
         self.learning_rate = learning_rate
         self._use_minibatch = (self.batch_size is not None)
         self.random_update = random_update
+        self.init_type = init_type
         
         assert self.dropout<1, 'dropout should be between 0 and 1'
         # sklearn method to use for matrix decomp
@@ -130,13 +134,25 @@ class JointOuterDecomp(object):
         """
         self._A = [[] for _ in range(self._P)]
         self._S = [[] for _ in range(self._Q)]
-
+        print(f'Initialising A and S with {self.init_type}...')
         for p in range(self._P):
             nrows = Clist[ self._Alu[p][0] ].shape[0]
-            self._A[p] = np.random.randn(nrows, self.n_components)
+            if self.init_type == 'random':
+                self._A[p] = np.random.randn(nrows, self.n_components)
+            elif self.init_type == 'svd':
+                concat_mat = np.concatenate([Clist[i] for i in self._Alu[p]], axis=1)
+                self._A[p] = svd(concat_mat)[0][:, :self.n_components]
+            else:
+                raise ValueError(f'Unsupported init_type: {self.init_type}')
         for q in range(self._Q):
-            ncols = Clist[ self._Slu[q][0] ].shape[1]
-            self._S[q] = np.random.randn(ncols, self.n_components)
+            ncols = Clist[ self._Slu[q][0] ].shape[1]    
+            if self.init_type == 'random':
+                self._S[q] = np.random.randn(ncols, self.n_components)
+            elif self.init_type == 'svd':
+                concat_mat = np.concatenate([Clist[i] for i in self._Slu[q]], axis=0)
+                self._S[q] = svd(concat_mat)[2][:self.n_components, :].T
+            else:
+                raise ValueError(f'Unsupported init_type: {self.init_type}')
 
     def regress(self, M, X, mode):
         """
