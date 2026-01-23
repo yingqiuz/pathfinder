@@ -38,7 +38,7 @@ from pathfinder import utils
 class JointOuterDecomp(object):
     def __init__(self, n_components, n_iter=100, dropout=-1, 
                  alpha=1e-5, method=None, method_kwargs=None, do_ica=None, 
-                 batch_size=None, learning_rate=None, random_update=None, 
+                 batch_size=None, learning_rate=None, update_fraction=1.0, 
                  init_type='svd', verbose=True):
         """
 
@@ -53,7 +53,8 @@ class JointOuterDecomp(object):
         do_ica : Perform ICA rotation at the end. Can be 'rows', 'cols', or 'both'
         batch_size (int or None): If None, use full batch updates, othewise use minibatch updates
         learning_rate (float or None): only used if batch_size is not None
-        random_update (float or None): fraction of p and q to update randomly in each iteration. If None, update all p and q in each iteration
+        update_fraction (float) : fraction of factors to update each iteration. 
+            1.0 means update all (default), <1.0 means random subset.
         init_type (str) : type of initialisation. Can be 'random' or 'svd'
         verbose (bool) : whether to print progress
         """
@@ -68,7 +69,9 @@ class JointOuterDecomp(object):
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self._use_minibatch = (self.batch_size is not None)
-        self.random_update = random_update
+        self.update_fraction = update_fraction
+        if init_type not in ('random', 'svd'):
+            raise ValueError(f"init_type must be 'random' or 'svd', got '{init_type}'")
         self.init_type = init_type
         
         assert self.dropout<1, 'dropout should be between 0 and 1'
@@ -139,20 +142,16 @@ class JointOuterDecomp(object):
             nrows = Clist[ self._Alu[p][0] ].shape[0]
             if self.init_type == 'random':
                 self._A[p] = np.random.randn(nrows, self.n_components)
-            elif self.init_type == 'svd':
+            else:  # svd
                 concat_mat = np.concatenate([Clist[i] for i in self._Alu[p]], axis=1)
                 self._A[p] = svd(concat_mat)[0][:, :self.n_components]
-            else:
-                raise ValueError(f'Unsupported init_type: {self.init_type}')
         for q in range(self._Q):
             ncols = Clist[ self._Slu[q][0] ].shape[1]    
             if self.init_type == 'random':
                 self._S[q] = np.random.randn(ncols, self.n_components)
-            elif self.init_type == 'svd':
+            else:  # svd
                 concat_mat = np.concatenate([Clist[i] for i in self._Slu[q]], axis=0)
                 self._S[q] = svd(concat_mat)[2][:self.n_components, :].T
-            else:
-                raise ValueError(f'Unsupported init_type: {self.init_type}')
 
     def regress(self, M, X, mode):
         """
@@ -410,7 +409,7 @@ class JointOuterDecomp(object):
         # begin loop
         loss = [self.calc_loss(Clist)]
         for _ in tqdm(range(self.n_iter)):
-            if not self.random_update:
+            if self.update_fraction >= 1.0:
                 # update all A and S matrices in each iteration
                 for q in range(self._Q):
                     self._update_S(Clist, q)
@@ -418,9 +417,11 @@ class JointOuterDecomp(object):
                     self._update_A(Clist, p)
             else:
                 # randomly select a subset of p and q to update
-                for q in np.random.choice(self._Q, size=int(self._Q * self.random_update), replace=False):
+                n_q = max(1, int(self._Q * self.update_fraction))
+                n_p = max(1, int(self._P * self.update_fraction))
+                for q in np.random.choice(self._Q, size=n_q, replace=False):
                     self._update_S(Clist, q)
-                for p in np.random.choice(self._P, size=int(self._P * self.random_update), replace=False):
+                for p in np.random.choice(self._P, size=n_p, replace=False):
                     self._update_A(Clist, p)
                 
             loss.append(self.calc_loss(Clist))
@@ -434,7 +435,8 @@ class JointOuterDecomp(object):
 
 # ANOTHER DECOMPOSITION APPROACH : JointSVD
 class JointSVD(object):
-    def __init__(self, n_components, n_iter=10, do_ica=None, batch_size=None, n_power_iter=2):
+    def __init__(self, n_components, n_iter=10, do_ica=None, batch_size=None, 
+                 n_power_iter=2, update_fraction=1.0):
         """Joint Singular Value Decomposition
 
         Given set of matrices C1, ..., CK, performs a joint SVD such that:
@@ -449,6 +451,16 @@ class JointSVD(object):
         Algorithm inspired by:
         Congedo M, et al. Approximate Joint Singular Value Decomposition of an Asymmetric Rectangular Matrix Set.
         ieee TSP 2010. DOI: 10.1109/TSP.2010.2087018
+
+        Parameters
+        ----------
+        n_components (int) : number of components
+        n_iter (int) : number of iterations
+        do_ica : Perform ICA rotation at the end. Can be 'rows', 'cols', or 'both'
+        batch_size (int or None): If None, use full batch updates, otherwise use minibatch updates
+        n_power_iter (int) : number of power iterations for minibatch updates
+        update_fraction (float) : fraction of factors to update each iteration.
+            1.0 means update all (default), <1.0 means random subset.
         """
         self._ncomp  = n_components
         self._niter  = n_iter
@@ -456,6 +468,7 @@ class JointSVD(object):
         self.batch_size = batch_size
         self.n_power_iter = n_power_iter
         self._use_minibatch = (self.batch_size is not None)
+        self.update_fraction = update_fraction
         
         self._K      = None
         self._P      = None
@@ -504,23 +517,22 @@ class JointSVD(object):
 
 
     def init(self, Clist):
-        """Initialise the U's, the V's, and the D's
-        U's and V's are random
-        the D's are given by minimizing the loss
+        """Initialise the U's, the V's, and the D's.
+        U's and V's are initialised with random orthonormal matrices.
+        The D's are computed to minimise the loss.
         """
         self._Ulist = [[] for _ in range(self._P)]
         self._Vlist = [[] for _ in range(self._Q)]
         self._Dlist = [[] for _ in range(self._K)]
 
         for p in range(self._P):
-            nrows = Clist[ self._Ulu[p][0] ].shape[0]
+            nrows = Clist[self._Ulu[p][0]].shape[0]
             self._Ulist[p] = qr(np.random.randn(nrows, self._ncomp), mode='economic')[0]
         for q in range(self._Q):
-#             self._updateV(Clist, q)
-            ncols = Clist[ self._Vlu[q][0] ].shape[1]
+            ncols = Clist[self._Vlu[q][0]].shape[1]
             self._Vlist[q] = qr(np.random.randn(ncols, self._ncomp), mode='economic')[0]
         for k in range(self._K):
-            self._updateD(Clist,k)
+            self._updateD(Clist, k)
 
 
     def _updateD(self, Clist, k):
@@ -702,13 +714,14 @@ class JointSVD(object):
         V = self._Vlist[ self._beta[k] ]
         return U, np.diag(self._Dlist[k]), V
 
-    def fit(self, Clist, alpha=None, beta=None):
+    def fit(self, Clist, alpha=None, beta=None, initial_state=None):
         """Fit list of matrices
 
         Clist : list of 2D arrays
         alpha : list of length len(Clist) indexing left matrices for C's
         beta  : list of length len(Clist) indexing right matrices for C's
-
+        initial_state : dict with 'U' and 'V' keys containing lists of initial matrices.
+            If provided, overrides init_type.
 
         For example, if Clist = [C0, C1, C2], and we want:
 
@@ -743,19 +756,36 @@ class JointSVD(object):
         self._check_dimensions(Clist)
 
         # Initialise
-        self.init(Clist)  # random for now
+        if initial_state is None:
+            self.init(Clist)
+        else:
+            assert len(initial_state['U']) == self._P, 'Initial U has incorrect length'
+            assert len(initial_state['V']) == self._Q, 'Initial V has incorrect length'
+            self._Ulist = initial_state['U']
+            self._Vlist = initial_state['V']
+            self._Dlist = [[] for _ in range(self._K)]
+            for k in range(self._K):
+                self._updateD(Clist, k)
 
         self._loss = np.zeros((self._niter+1, self._K))
         self._loss[0,:] = [ np.linalg.norm(C-Cpred) for C,Cpred in zip(Clist,self.predict()) ]
         # Main algorithm
         for it in tqdm(range(self._niter)):
-            # Update U
-            for p in range(self._P):
-                self._updateU(Clist, p)
-            # Update V
-            for q in range(self._Q):
-                self._updateV(Clist, q)
-            # Update D
+            if self.update_fraction >= 1.0:
+                # Update all U, V, D
+                for p in range(self._P):
+                    self._updateU(Clist, p)
+                for q in range(self._Q):
+                    self._updateV(Clist, q)
+            else:
+                # Randomly select a subset to update
+                n_p = max(1, int(self._P * self.update_fraction))
+                n_q = max(1, int(self._Q * self.update_fraction))
+                for p in np.random.choice(self._P, size=n_p, replace=False):
+                    self._updateU(Clist, p)
+                for q in np.random.choice(self._Q, size=n_q, replace=False):
+                    self._updateV(Clist, q)
+            # Always update all D's
             for k in range(self._K):
                 self._updateD(Clist, k)
             self._loss[it+1,:] = [ np.linalg.norm(C-Cpred) for C,Cpred in zip(Clist,self.predict()) ]

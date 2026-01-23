@@ -26,7 +26,7 @@ class TestJointOuterDecomp:
         assert algo.do_ica is None
         assert algo.batch_size is None
         assert algo.learning_rate is None
-        assert algo.random_update is None
+        assert algo.update_fraction == 1.0
         assert algo._use_minibatch is False
         assert algo.method == Ridge
 
@@ -40,7 +40,7 @@ class TestJointOuterDecomp:
             do_ica='both',
             batch_size=32,
             learning_rate=0.01,
-            random_update=0.5
+            update_fraction=0.5
         )
         assert algo.n_components == 10
         assert algo.n_iter == 50
@@ -49,7 +49,7 @@ class TestJointOuterDecomp:
         assert algo.do_ica == 'both'
         assert algo.batch_size == 32
         assert algo.learning_rate == 0.01
-        assert algo.random_update == 0.5
+        assert algo.update_fraction == 0.5
         assert algo._use_minibatch is True
 
     def test_initialization_with_method(self):
@@ -133,15 +133,15 @@ class TestJointOuterDecomp:
         assert len(algo._A) == 3
         assert len(algo._S) == 2
 
-    def test_fit_with_random_update(self):
-        """Test fitting with random update"""
+    def test_fit_with_partial_update(self):
+        """Test fitting with partial update fraction"""
         data = utils.simulate_data_grid(num_domains=3, num_modalities=2)
         data_list, alpha, beta = utils.DataTable_to_Lookup(data)
 
         algo = decomp.JointOuterDecomp(
             n_components=5,
             n_iter=3,
-            random_update=0.5,
+            update_fraction=0.5,
             verbose=False
         )
         algo.fit(data_list, alpha, beta)
@@ -383,6 +383,7 @@ class TestJointSVD:
         assert algo.batch_size is None
         assert algo.n_power_iter == 2
         assert algo._use_minibatch is False
+        assert algo.update_fraction == 1.0
 
     def test_initialization_custom(self):
         """Test initialization with custom parameters"""
@@ -391,7 +392,8 @@ class TestJointSVD:
             n_iter=20,
             do_ica='both',
             batch_size=32,
-            n_power_iter=5
+            n_power_iter=5,
+            update_fraction=0.5
         )
         assert algo._ncomp == 10
         assert algo._niter == 20
@@ -399,6 +401,7 @@ class TestJointSVD:
         assert algo.batch_size == 32
         assert algo.n_power_iter == 5
         assert algo._use_minibatch is True
+        assert algo.update_fraction == 0.5
 
     def test_fit_basic(self):
         """Test basic fitting with simulated data"""
@@ -449,6 +452,50 @@ class TestJointSVD:
 
         assert len(algo._Ulist) == 3
         assert len(algo._Vlist) == 2
+
+    def test_fit_with_partial_update(self):
+        """Test fitting with partial update fraction"""
+        data = utils.simulate_data_grid(num_domains=3, num_modalities=2)
+        data_list, alpha, beta = utils.DataTable_to_Lookup(data)
+
+        algo = decomp.JointSVD(n_components=5, n_iter=3, update_fraction=0.5)
+        algo.fit(data_list, alpha, beta)
+
+        assert len(algo._Ulist) == 3
+        assert len(algo._Vlist) == 2
+
+    def test_fit_with_initial_state(self):
+        """Test fitting with custom initial state"""
+        np.random.seed(42)
+        data = utils.simulate_data_grid(num_domains=3, num_modalities=2)
+        data_list, alpha, beta = utils.DataTable_to_Lookup(data)
+
+        # Create custom initial U and V matrices (must be orthonormal)
+        from scipy.linalg import qr
+        U_init = []
+        V_init = []
+        for i in range(3):  # 3 domains
+            nrows = data_list[alpha.index(i)].shape[0]
+            U_init.append(qr(np.random.randn(nrows, 5), mode='economic')[0])
+        for j in range(2):  # 2 modalities
+            ncols = data_list[beta.index(j)].shape[1]
+            V_init.append(qr(np.random.randn(ncols, 5), mode='economic')[0])
+
+        algo = decomp.JointSVD(n_components=5, n_iter=3)
+        algo.fit(data_list, alpha, beta, initial_state={'U': U_init, 'V': V_init})
+
+        assert len(algo._Ulist) == 3
+        assert len(algo._Vlist) == 2
+
+    def test_fit_initial_state_wrong_shape(self):
+        """Test that wrong initial state shape raises error"""
+        data = utils.simulate_data_grid(num_domains=3, num_modalities=2)
+        data_list, alpha, beta = utils.DataTable_to_Lookup(data)
+
+        algo = decomp.JointSVD(n_components=5, n_iter=3)
+
+        with pytest.raises(AssertionError, match='Initial U has incorrect length'):
+            algo.fit(data_list, alpha, beta, initial_state={'U': [], 'V': []})
 
     def test_orthogonality_of_U(self):
         """Test that U matrices are orthonormal"""
