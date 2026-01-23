@@ -566,6 +566,9 @@ class TestJointSVD:
 
     def test_reconstruction_accuracy(self):
         """Test that SVD provides accurate reconstruction"""
+        # Set random seed for reproducibility
+        np.random.seed(42)
+        
         Clist, alpha, beta = utils.simulate_JointSVD(
             K=5, num_U=2, num_V=2, rank=3, SNR=100
         )
