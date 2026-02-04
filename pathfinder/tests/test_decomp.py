@@ -17,7 +17,7 @@ class TestJointOuterDecomp:
     """Test suite for JointOuterDecomp class"""
 
     def test_initialization_default(self):
-        """Test default initialization"""
+        """Test default initialisation"""
         algo = decomp.JointOuterDecomp(n_components=5)
         assert algo.n_components == 5
         assert algo.n_iter == 100
@@ -25,13 +25,12 @@ class TestJointOuterDecomp:
         assert algo.alpha == 1e-5
         assert algo.do_ica is None
         assert algo.batch_size is None
-        assert algo.learning_rate is None
         assert algo.update_fraction == 1.0
         assert algo._use_minibatch is False
         assert algo.method == Ridge
 
     def test_initialization_custom(self):
-        """Test initialization with custom parameters"""
+        """Test initialisation with custom parameters"""
         algo = decomp.JointOuterDecomp(
             n_components=10,
             n_iter=50,
@@ -39,7 +38,6 @@ class TestJointOuterDecomp:
             alpha=1e-3,
             do_ica='both',
             batch_size=32,
-            learning_rate=0.01,
             update_fraction=0.5
         )
         assert algo.n_components == 10
@@ -48,7 +46,6 @@ class TestJointOuterDecomp:
         assert algo.alpha == 1e-3
         assert algo.do_ica == 'both'
         assert algo.batch_size == 32
-        assert algo.learning_rate == 0.01
         assert algo.update_fraction == 0.5
         assert algo._use_minibatch is True
 

@@ -8,7 +8,6 @@
 # SHBASECOPYRIGHT
 
 import numpy as np
-from tqdm import tqdm
 from scipy.sparse.linalg import svds
 from scipy.linalg import qr, svd
 
@@ -38,25 +37,38 @@ from pathfinder import utils
 class JointOuterDecomp(object):
     def __init__(self, n_components, n_iter=100, dropout=-1, 
                  alpha=1e-5, method=None, method_kwargs=None, do_ica=None, 
-                 batch_size=None, learning_rate=None, update_fraction=1.0, 
+                 batch_size=None, update_fraction=1.0, 
                  init_type='svd', verbose=True):
-        """
+        """Joint Outer Product Decomposition.
+        
+        Decomposes a set of matrices Xk = A_{alpha(k)} @ S_{beta(k)}^T
 
         Parameters
         ----------
-        n_components (int) : number of components of low rank decomposition
-        n_iter (int) : number of iterations
-        dropout (float) :float between 0 and 1, proportion of dropped out rows/columns of X's. If <0, no dropout
-        alpha (float) : Regularisation parameter
-        method : Regression method to use in sklearn (e.g. sklearn.linear_model.Ridge)
-        method_kwargs : Keyword arguments to pass to sklearn method
-        do_ica : Perform ICA rotation at the end. Can be 'rows', 'cols', or 'both'
-        batch_size (int or None): If None, use full batch updates, othewise use minibatch updates
-        learning_rate (float or None): only used if batch_size is not None
-        update_fraction (float) : fraction of factors to update each iteration. 
+        n_components : int
+            Number of components of low rank decomposition.
+        n_iter : int
+            Number of iterations.
+        dropout : float
+            Float between 0 and 1, proportion of dropped out rows/columns of X's. 
+            If <0, no dropout.
+        alpha : float
+            Regularisation parameter.
+        method : class
+            Regression method to use in sklearn (e.g. sklearn.linear_model.Ridge).
+        method_kwargs : dict
+            Keyword arguments to pass to sklearn method.
+        do_ica : str or None
+            Perform ICA rotation at the end. Can be 'rows', 'cols', or 'both'.
+        batch_size : int or None
+            If None, use full batch updates, otherwise use minibatch updates.
+        update_fraction : float
+            Fraction of factors to update each iteration. 
             1.0 means update all (default), <1.0 means random subset.
-        init_type (str) : type of initialisation. Can be 'random' or 'svd'
-        verbose (bool) : whether to print progress
+        init_type : str
+            Type of initialisation. Can be 'random' or 'svd'.
+        verbose : bool
+            Whether to print progress during fitting.
         """
 
         self.n_components = n_components
@@ -64,10 +76,10 @@ class JointOuterDecomp(object):
         self.dropout      = dropout
         self.alpha        = alpha
         self.do_ica       = do_ica
+        self.verbose      = verbose
         
         # mini batch attributes
         self.batch_size = batch_size
-        self.learning_rate = learning_rate
         self._use_minibatch = (self.batch_size is not None)
         self.update_fraction = update_fraction
         if init_type not in ('random', 'svd'):
@@ -131,13 +143,11 @@ class JointOuterDecomp(object):
             assert len(set([Clist[k].shape[1] for k in self._Slu[q]])) == 1 , 'Matrices have incompatible cols'
 
     def init(self, Clist):
-        """ initialise A[p]'s and S[q]'s
-        Uses multivariate Gaussians
-
-        """
+        """Initialise A[p]'s and S[q]'s based on init_type."""
         self._A = [[] for _ in range(self._P)]
         self._S = [[] for _ in range(self._Q)]
-        print(f'Initialising A and S with {self.init_type}...')
+        if self.verbose:
+            print(f'Initialising A and S with {self.init_type}...')
         for p in range(self._P):
             nrows = Clist[ self._Alu[p][0] ].shape[0]
             if self.init_type == 'random':
@@ -268,14 +278,17 @@ class JointOuterDecomp(object):
             self._update_S_fullbatch(Clist, q)
 
     def _update_S_fullbatch(self, Clist, q):
-        """Update q-th matrix S[p]
-        Concatenate horizontally all matrices in Clist where beta[k]=p
-        Also concatenate the corresponding A's
+        """Update q-th matrix S[q].
+        
+        Concatenate vertically all matrices in Clist where beta[k]=q.
+        Also concatenate the corresponding A's.
 
         Parameters
         ----------
-        Clist (list)
-        q (int)
+        Clist : list
+            List of data matrices.
+        q : int
+            Index of S matrix to update.
         """
 
         indices = self._Slu[q]
@@ -408,7 +421,7 @@ class JointOuterDecomp(object):
 
         # begin loop
         loss = [self.calc_loss(Clist)]
-        for _ in tqdm(range(self.n_iter)):
+        for it in range(self.n_iter):
             if self.update_fraction >= 1.0:
                 # update all A and S matrices in each iteration
                 for q in range(self._Q):
@@ -425,6 +438,14 @@ class JointOuterDecomp(object):
                     self._update_A(Clist, p)
                 
             loss.append(self.calc_loss(Clist))
+            
+            if self.verbose:
+                mean_loss = np.mean(loss[-1])
+                progress = (it + 1) / self.n_iter * 100
+                print(f'\rIteration {it+1:4d}/{self.n_iter} [{progress:5.1f}%] | Loss: {mean_loss:.6f}', end='')
+        
+        if self.verbose:
+            print()  # newline after progress
 
         # Do ICA at the end?
         if self.do_ica is not None:
@@ -436,31 +457,40 @@ class JointOuterDecomp(object):
 # ANOTHER DECOMPOSITION APPROACH : JointSVD
 class JointSVD(object):
     def __init__(self, n_components, n_iter=10, do_ica=None, batch_size=None, 
-                 n_power_iter=2, update_fraction=1.0):
-        """Joint Singular Value Decomposition
+                 n_power_iter=2, update_fraction=1.0, verbose=True):
+        """Joint Singular Value Decomposition.
 
         Given set of matrices C1, ..., CK, performs a joint SVD such that:
 
         Ck = U_{alpha(k)} Dk V_{beta(k)}^T
 
-        Where the Dk's are eigenvalue matrices (diagonal)
-        And the Ua's and Vb's are a set of orthonormal matrices with n_components columns
+        Where the Dk's are diagonal matrices (singular values) and the U's and V's 
+        are sets of orthonormal matrices with n_components columns.
 
-        The mappings alpha(k) and beta(k) map from the data indices to the respective left/right ortho matrices
+        The mappings alpha(k) and beta(k) map from the data indices to the 
+        respective left/right orthonormal matrices.
 
         Algorithm inspired by:
-        Congedo M, et al. Approximate Joint Singular Value Decomposition of an Asymmetric Rectangular Matrix Set.
-        ieee TSP 2010. DOI: 10.1109/TSP.2010.2087018
+        Congedo M, et al. Approximate Joint Singular Value Decomposition of an 
+        Asymmetric Rectangular Matrix Set. IEEE TSP 2010. DOI: 10.1109/TSP.2010.2087018
 
         Parameters
         ----------
-        n_components (int) : number of components
-        n_iter (int) : number of iterations
-        do_ica : Perform ICA rotation at the end. Can be 'rows', 'cols', or 'both'
-        batch_size (int or None): If None, use full batch updates, otherwise use minibatch updates
-        n_power_iter (int) : number of power iterations for minibatch updates
-        update_fraction (float) : fraction of factors to update each iteration.
+        n_components : int
+            Number of components.
+        n_iter : int
+            Number of iterations.
+        do_ica : str or None
+            Perform ICA rotation at the end. Can be 'rows', 'cols', or 'both'.
+        batch_size : int or None
+            If None, use full batch updates, otherwise use minibatch updates.
+        n_power_iter : int
+            Number of power iterations for minibatch updates.
+        update_fraction : float
+            Fraction of factors to update each iteration.
             1.0 means update all (default), <1.0 means random subset.
+        verbose : bool
+            Whether to print progress during fitting.
         """
         self._ncomp  = n_components
         self._niter  = n_iter
@@ -469,6 +499,7 @@ class JointSVD(object):
         self.n_power_iter = n_power_iter
         self._use_minibatch = (self.batch_size is not None)
         self.update_fraction = update_fraction
+        self.verbose = verbose
         
         self._K      = None
         self._P      = None
@@ -715,24 +746,29 @@ class JointSVD(object):
         return U, np.diag(self._Dlist[k]), V
 
     def fit(self, Clist, alpha=None, beta=None, initial_state=None):
-        """Fit list of matrices
+        """Fit list of matrices.
 
+        Parameters
+        ----------
         Clist : list of 2D arrays
-        alpha : list of length len(Clist) indexing left matrices for C's
-        beta  : list of length len(Clist) indexing right matrices for C's
-        initial_state : dict with 'U' and 'V' keys containing lists of initial matrices.
-            If provided, overrides init_type.
+            List of matrices to decompose.
+        alpha : list of int
+            List of length len(Clist) indexing left matrices (U's) for each C.
+        beta : list of int
+            List of length len(Clist) indexing right matrices (V's) for each C.
+        initial_state : dict or None
+            Dict with 'U' and 'V' keys containing lists of initial matrices.
+            If provided, overrides random initialisation.
 
-        For example, if Clist = [C0, C1, C2], and we want:
+        Example
+        -------
+        If Clist = [C0, C1, C2], and we want:
+            C0 = U0 @ D0 @ V0^T
+            C1 = U0 @ D1 @ V1^T
+            C2 = U1 @ D2 @ V1^T
 
-                    C0=U0D0V0^T
-                    C1=U0D1V1^T
-                    C2=U1D2V1^T
-
-        then alpha = [0,0,1] and beta = [0,1,1]
-
+        then alpha = [0, 0, 1] and beta = [0, 1, 1]
         """
-
         # Possibly not the most efficient algorithm in the world, as it concatenates
         # potentially large matrices.
         # Checks data dimensions
@@ -769,8 +805,9 @@ class JointSVD(object):
 
         self._loss = np.zeros((self._niter+1, self._K))
         self._loss[0,:] = [ np.linalg.norm(C-Cpred) for C,Cpred in zip(Clist,self.predict()) ]
+        
         # Main algorithm
-        for it in tqdm(range(self._niter)):
+        for it in range(self._niter):
             if self.update_fraction >= 1.0:
                 # Update all U, V, D
                 for p in range(self._P):
@@ -789,7 +826,15 @@ class JointSVD(object):
             for k in range(self._K):
                 self._updateD(Clist, k)
             self._loss[it+1,:] = [ np.linalg.norm(C-Cpred) for C,Cpred in zip(Clist,self.predict()) ]
-        # Finish
+            
+            if self.verbose:
+                mean_loss = np.mean(self._loss[it+1,:])
+                progress = (it + 1) / self._niter * 100
+                print(f'\rIteration {it+1:4d}/{self._niter} [{progress:5.1f}%] | Loss: {mean_loss:.6f}', end='')
+        
+        if self.verbose:
+            print()  # newline after progress
+            
         # Do ICA at the end?
         if self._do_ica is not None:
             self._Ulist, self._Vlist, ica = utils.perform_ica(self._Ulist, self._Vlist, self._do_ica, return_ica=True)
