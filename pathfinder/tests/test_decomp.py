@@ -771,5 +771,104 @@ class TestNumericalStability:
         assert len(preds) == 2
 
 
+class TestVerboseOutput:
+    """Test verbose progress reporting"""
+
+    def test_joint_outer_decomp_verbose_true(self, capsys):
+        """Test that JointOuterDecomp prints progress when verbose=True"""
+        np.random.seed(42)
+        data = utils.simulate_data_grid(num_domains=2, num_modalities=2)
+        data_list, alpha, beta = utils.DataTable_to_Lookup(data)
+
+        algo = decomp.JointOuterDecomp(n_components=3, n_iter=5, verbose=True)
+        algo.fit(data_list, alpha, beta)
+
+        captured = capsys.readouterr()
+        # Should contain initialisation message
+        assert 'Initialising A and S' in captured.out
+        # Should contain progress output with iteration info
+        assert 'Iteration' in captured.out
+        assert 'Loss:' in captured.out
+        # Should show final iteration
+        assert '5/5' in captured.out
+
+    def test_joint_outer_decomp_verbose_false(self, capsys):
+        """Test that JointOuterDecomp is silent when verbose=False"""
+        np.random.seed(42)
+        data = utils.simulate_data_grid(num_domains=2, num_modalities=2)
+        data_list, alpha, beta = utils.DataTable_to_Lookup(data)
+
+        algo = decomp.JointOuterDecomp(n_components=3, n_iter=5, verbose=False)
+        algo.fit(data_list, alpha, beta)
+
+        captured = capsys.readouterr()
+        # Should have no output
+        assert captured.out == ''
+
+    def test_joint_svd_verbose_true(self, capsys):
+        """Test that JointSVD prints progress when verbose=True"""
+        np.random.seed(42)
+        Clist, alpha, beta = utils.simulate_JointSVD(
+            K=4, num_U=2, num_V=2, rank=3, SNR=10
+        )
+
+        algo = decomp.JointSVD(n_components=3, n_iter=5, verbose=True)
+        algo.fit(Clist, alpha, beta)
+
+        captured = capsys.readouterr()
+        # Should contain progress output with iteration info
+        assert 'Iteration' in captured.out
+        assert 'Loss:' in captured.out
+        # Should show final iteration
+        assert '5/5' in captured.out
+
+    def test_joint_svd_verbose_false(self, capsys):
+        """Test that JointSVD is silent when verbose=False"""
+        np.random.seed(42)
+        Clist, alpha, beta = utils.simulate_JointSVD(
+            K=4, num_U=2, num_V=2, rank=3, SNR=10
+        )
+
+        algo = decomp.JointSVD(n_components=3, n_iter=5, verbose=False)
+        algo.fit(Clist, alpha, beta)
+
+        captured = capsys.readouterr()
+        # Should have no output
+        assert captured.out == ''
+
+    def test_verbose_progress_percentage(self, capsys):
+        """Test that progress percentage is displayed correctly"""
+        np.random.seed(42)
+        data = utils.simulate_data_grid(num_domains=2, num_modalities=2)
+        data_list, alpha, beta = utils.DataTable_to_Lookup(data)
+
+        algo = decomp.JointOuterDecomp(n_components=3, n_iter=10, verbose=True)
+        algo.fit(data_list, alpha, beta)
+
+        captured = capsys.readouterr()
+        # Should contain percentage marker (100% at the end)
+        assert '100.0%' in captured.out
+
+    def test_verbose_loss_is_numeric(self, capsys):
+        """Test that loss values in verbose output are valid numbers"""
+        np.random.seed(42)
+        Clist, alpha, beta = utils.simulate_JointSVD(
+            K=4, num_U=2, num_V=2, rank=3, SNR=10
+        )
+
+        algo = decomp.JointSVD(n_components=3, n_iter=3, verbose=True)
+        algo.fit(Clist, alpha, beta)
+
+        captured = capsys.readouterr()
+        # Extract loss value from output (format: "Loss: X.XXXXXX")
+        import re
+        loss_matches = re.findall(r'Loss:\s*([0-9.]+)', captured.out)
+        assert len(loss_matches) > 0
+        # All loss values should be valid positive numbers
+        for loss_str in loss_matches:
+            loss_val = float(loss_str)
+            assert loss_val >= 0
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
