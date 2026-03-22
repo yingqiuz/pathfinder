@@ -9,7 +9,8 @@
 
 import numpy as np
 from scipy.sparse.linalg import svds
-from scipy.linalg import qr, svd
+from scipy.linalg import qr
+from numpy.linalg import svd
 
 """ Decomposition classes - Interface
 
@@ -82,7 +83,7 @@ class JointOuterDecomp(object):
         self.batch_size = batch_size
         self._use_minibatch = (self.batch_size is not None)
         self.update_fraction = update_fraction
-        if init_type not in ('random', 'svd'):
+        if init_type not in ('random', 'svd', 'svd_quick'):
             raise ValueError(f"init_type must be 'random' or 'svd', got '{init_type}'")
         self.init_type = init_type
         
@@ -152,16 +153,25 @@ class JointOuterDecomp(object):
             nrows = Clist[ self._Alu[p][0] ].shape[0]
             if self.init_type == 'random':
                 self._A[p] = np.random.randn(nrows, self.n_components)
-            else:  # svd
+            elif self.init_type == 'svd':  # svd 
+                #(this would be memory-intensive for large matrices)
                 concat_mat = np.concatenate([Clist[i] for i in self._Alu[p]], axis=1)
-                self._A[p] = svd(concat_mat)[0][:, :self.n_components]
+                self._A[p] = svd(concat_mat, full_matrices=False)[0][:, :self.n_components]
+            elif self.init_type == 'svd_quick':
+                self._A[p] = svd(Clist[self._Alu[p][0]], full_matrices=False)[0][:, :self.n_components]
+            else:
+                raise ValueError(f'Unrecognised init_type={self.init_type}')
         for q in range(self._Q):
             ncols = Clist[ self._Slu[q][0] ].shape[1]    
             if self.init_type == 'random':
                 self._S[q] = np.random.randn(ncols, self.n_components)
-            else:  # svd
+            elif self.init_type == 'svd':  # svd
                 concat_mat = np.concatenate([Clist[i] for i in self._Slu[q]], axis=0)
-                self._S[q] = svd(concat_mat)[2][:self.n_components, :].T
+                self._S[q] = svd(concat_mat, full_matrices=False)[2][:self.n_components, :].T
+            elif self.init_type == 'svd_quick':
+                self._S[q] = svd(Clist[self._Slu[q][0]], full_matrices=False)[2][:self.n_components, :].T
+            else:
+                raise ValueError(f'Unrecognised init_type={self.init_type}')
 
     def regress(self, M, X, mode):
         """
