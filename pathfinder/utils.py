@@ -156,35 +156,72 @@ def Lookup_to_DataTable(DataList, alpha, beta, row_names=None, col_names=None):
 
 
 # ICA
-def perform_ica(A, S, approach='both', return_ica=False):
-    """Do a concat ICA at the end of the fitting process
+def perform_ica(A, S, approach='both', return_ica=False, max_iter=5000, tol=1e-6):
+    """ICA post-processing to resolve rotational ambiguity.
+
+    Given factors A and S such that C_k = A[p] @ S[q]^T, applies ICA to
+    find a rotation that maximises non-Gaussianity of the components, while
+    preserving the product A @ S^T.
 
     Parameters
     ----------
-    A: list of left-matrices
-    S: list of right-matrices
-    approach (str) : 'left', 'right', or 'both'
+    A : list of left-matrices (n_p x r)
+    S : list of right-matrices (n_q x r)
+    approach : str
+        Which side to run ICA on:
+        - 'left' or 'rows': ICA on concatenated A's, derive S's via inverse.
+        - 'right' or 'cols': ICA on concatenated S's, derive A's via inverse.
+        - 'both': equivalent to 'left'.
+    return_ica : bool
+        If True, also return the fitted ICA object.
+    max_iter : int
+        Maximum iterations for FastICA.
+    tol : float
+        Convergence tolerance for FastICA.
 
-    :return: rotated A's and S's
+    Returns
+    -------
+    A_new, S_new : lists of rotated factor matrices
+        Product is preserved: A_new[p] @ S_new[q]^T == A[p] @ S[q]^T
+    ica : FastICA (only if return_ica=True)
     """
-    X = []
-    if approach in ['left', 'both']:
-        X.extend(A)
-    if approach in ['right', 'both']:
-        X.extend(S)
-
     from sklearn.decomposition import FastICA
-    ica = FastICA(whiten=False)
-    X = np.concatenate(X, axis=0)
-    ica.fit(X)
-    # rotate all matrices
-    A = [ica.transform(a) for a in A]
-    S = [ica.transform(s) for s in S]
+
+    if approach in ['left', 'rows', 'both']:
+        # ICA on concatenated A's
+        A_concat = np.concatenate(A, axis=0)
+        ica = FastICA(whiten='unit-variance', max_iter=max_iter, tol=tol,
+                      random_state=0)
+        ica.fit(A_concat)
+        # ica.components_ = W @ K (unmixing @ whitening), shape (r, r)
+        # ica.transform(X) = (X - mean) @ M^T — includes centering.
+        # For product preservation we apply the rotation WITHOUT centering:
+        #   A_new = A @ M^T,  S_new = S @ M^{-1}
+        #   => A_new @ S_new^T = A @ M^T @ M^{-T} @ S^T = A @ S^T  ✓
+        M = ica.components_  # (r, r)
+        M_inv = np.linalg.inv(M)
+        A_new = [a @ M.T for a in A]
+        S_new = [s @ M_inv for s in S]
+
+    elif approach in ['right', 'cols']:
+        # ICA on concatenated S's
+        S_concat = np.concatenate(S, axis=0)
+        ica = FastICA(whiten='unit-variance', max_iter=max_iter, tol=tol,
+                      random_state=0)
+        ica.fit(S_concat)
+        M = ica.components_
+        M_inv = np.linalg.inv(M)
+        S_new = [s @ M.T for s in S]
+        A_new = [a @ M_inv for a in A]
+
+    else:
+        raise ValueError(f"approach must be 'left', 'right', 'rows', 'cols', "
+                         f"or 'both', got '{approach}'")
 
     if return_ica:
-        return A, S, ica
+        return A_new, S_new, ica
     else:
-        return A, S
+        return A_new, S_new
 
 
 # VISUALISATION
