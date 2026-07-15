@@ -281,3 +281,58 @@ def plot_data_fit(data_dict, data_pred, data_complete=None):
             axes[i, j].scatter(groudtruth, data_pred[d][m], c=c)
             axes[i, j].axline((0, 0), slope=1, color='k')
     return fig
+
+
+# DECOMPOSITION INIT HELPER (shared by JointOuterDecomp and JointSVD)
+def _gram_svd_init(Clist, indices, mode, n_components, batch_size):
+    """Memory-light SVD initialisation via streamed Gram accumulation.
+
+    Returns the top-n_components singular vectors of the (never materialised)
+    concatenation of the matrices in `indices`, computed as the leading
+    eigenvectors of a Gram matrix accumulated one matrix - and one batch of
+    columns/rows - at a time. Peak memory is bounded by the factor dimension
+    squared, independent of how many matrices share the factor. Accuracy of the
+    small singular directions is reduced (the Gram squares the condition
+    number), which is immaterial for an initialisation the iterations refine.
+    The returned columns are orthonormal.
+
+    Parameters
+    ----------
+    Clist : list of 2D arrays
+    indices : list of int
+        Data indices sharing this factor (a lookup-table entry).
+    mode : str
+        'left'  : left singular vectors of the horizontal concat [C_i | ...]
+                  (matrices share rows); accumulates sum_i C_i C_i^T.
+        'right' : right singular vectors of the vertical concat [C_i ; ...]
+                  (matrices share cols); accumulates sum_i C_i^T C_i.
+    n_components : int
+        Number of leading singular vectors to return.
+    batch_size : int
+        Column/row chunk size for the streamed accumulation.
+    """
+    if mode == 'left':
+        dim = Clist[indices[0]].shape[0]
+        G = np.zeros((dim, dim))
+        for i in indices:
+            C = Clist[i]
+            ncol = C.shape[1]
+            for c0 in range(0, ncol, batch_size):
+                blk = C[:, c0:min(c0 + batch_size, ncol)]
+                G += blk @ blk.T
+    elif mode == 'right':
+        dim = Clist[indices[0]].shape[1]
+        G = np.zeros((dim, dim))
+        for i in indices:
+            C = Clist[i]
+            nrow = C.shape[0]
+            for r0 in range(0, nrow, batch_size):
+                blk = C[r0:min(r0 + batch_size, nrow), :]
+                G += blk.T @ blk
+    else:
+        raise ValueError(f"mode must be 'left' or 'right', got '{mode}'")
+    # leading eigenvectors (eigh returns eigenvalues in ascending order).
+    # .copy() the k columns we keep so the full (dim x dim) eigenvector matrix
+    # can be freed rather than kept alive by a slice-view.
+    eigvecs = np.linalg.eigh(G)[1]
+    return eigvecs[:, ::-1][:, :n_components].copy()
