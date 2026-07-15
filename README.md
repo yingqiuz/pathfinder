@@ -41,15 +41,17 @@ The below diagram shows how a data table relates to a data graph:
 
 Mathematically, we can re-write our matrix decompositions as:
 
-$$X_k = A_{\alpha(k)}S_{\beta(k)}^T$$,
+$$X_k = A_{\alpha(k)}S_{\beta(k)}^T$$
 
-where $\alpha(\dot)$, and $\beta(\dot)$ are lookup functions that map the data index $k$ to the indices in the matrices sets $\{A_1,A_2,\dots\}$ and $\{S_1,S_2,\dots\}$.
+where $\alpha(\cdot)$, and $\beta(\cdot)$ are lookup functions that map the data index $k$ to the indices in the matrices sets $\{A_1,A_2,\dots\}$ and $\{S_1,S_2,\dots\}$.
 
 **2) SVD-style decomposition.**
 
 The decompositions $X_{d,m} = A_d S_m^T$ assume that the shared modes all have the same "amplitudes" across the datasets. One extension would be to find decompositions of the type "singular value decomposition", where we estimate between-data shared modes and within-data amplitudes: 
 
-$$X_{k} = U_d D_k V_m^T$$ where $D_k$ are diagonal matrices and $U_d$ and $V_d$ are unitary matrices (i.e. $U_d^TU_d=V_m^TV_m=I$) 
+$$X_{k} = U_d D_k V_m^T$$
+
+where $D_k$ are diagonal matrices and $U_d$ and $V_d$ are unitary matrices (i.e. $U_d^TU_d=V_m^TV_m=I$)
 
 **3) ICA.**
 
