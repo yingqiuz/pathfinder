@@ -7,7 +7,7 @@ PathFinder is a toolbox for finding common patterns in a set of related datasets
 
 As an example, say we have multiple datasets arranged into $D$ domains and $M$ modalities. For example, domains can be "species", and modalities can be different types of measurements per species. 
 
-Each dataset is a matrix $\mathbf{X_{d,m}}$ denoting data from domain $d\in \{1,\dots,D\}$ and modality $m\in \{1,\dots,M\}$. The size of such matrix is $r_d\times c_m$, i.e. it has $r_d$ rows and $c_m$ columns. 
+Each dataset is a matrix $\mathbf{X_{d,m}}$ denoting data from domain $d\in \lbrace 1,\dots,D\rbrace$ and modality $m\in \lbrace 1,\dots,M\rbrace$. The size of such matrix is $r_d\times c_m$, i.e. it has $r_d$ rows and $c_m$ columns. 
 
 Through this notation, it can be seen that within any given domain, all datasets share the row dimension, and within any given modality, all the datasets share the column dimension.
 
@@ -19,7 +19,7 @@ Such decompositions mean that we want to find common subspaces within each domai
 
 The above decompositions are ill-defined unless we add additional constraints on the matrices $\mathbf{A_d}$ and $\mathbf{S_m}$. There are many options, for example L2-regularisation, or positivity, etc.
 
-As we said earlier, some of the modalities might be missing in some of the domains/species. We define a mask $\mathcal{M}$ as the set of matrices that we do have access to, i.e. $\mathcal{M}=\left\{(d,m) \mid \mathbf{X_{d,m}} \text{ exists} \right\}$. 
+As we said earlier, some of the modalities might be missing in some of the domains/species. We define a mask $\mathcal{M}$ as the set of matrices that we do have access to, i.e. $\mathcal{M}=\left\lbrace (d,m) \mid \mathbf{X_{d,m}} \text{ exists} \right\rbrace$. 
 
 <img src="pathfinder/data/pf_table.png" width="500">
 
@@ -43,7 +43,7 @@ Mathematically, we can re-write our matrix decompositions as:
 
 $$X_k = A_{\alpha(k)}S_{\beta(k)}^T$$
 
-where $\alpha(\cdot)$, and $\beta(\cdot)$ are lookup functions that map the data index $k$ to the indices in the matrices sets $\{A_1,A_2,\dots\}$ and $\{S_1,S_2,\dots\}$.
+where $\alpha(\cdot)$, and $\beta(\cdot)$ are lookup functions that map the data index $k$ to the indices in the matrices sets $\lbrace A_1,A_2,\dots\rbrace$ and $\lbrace S_1,S_2,\dots\rbrace$.
 
 **2) SVD-style decomposition.**
 
