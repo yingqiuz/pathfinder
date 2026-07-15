@@ -2,7 +2,9 @@
 
 # tests.py - Unit tests for pathfinder
 #
-# Author: Saad Jbabdi <saad@fmrib.ox.ac.uk>
+# Author: 
+# Akina Ying-Qiu Zheng <ying-qiu.zheng@ndcn.ox.ac.uk>
+# Saad Jbabdi <saad@fmrib.ox.ac.uk>
 #
 # Copyright (C) 2024 University of Oxford
 # SHBASECOPYRIGHT
