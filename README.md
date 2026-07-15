@@ -1,5 +1,7 @@
 # pathfinder
 
+![tests](https://github.com/yingqiuz/pathfinder/actions/workflows/tests.yml/badge.svg)
+
 ## Goals
 
 ### Vanilla PathFinder
