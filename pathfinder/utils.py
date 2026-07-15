@@ -9,10 +9,6 @@
 # Copyright (C) 2024 University of Oxford
 # SHBASECOPYRIGHT
 
-
-# TODO:
-#
-
 import numpy as np
 import matplotlib.pyplot as plt
 
