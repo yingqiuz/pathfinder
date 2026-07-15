@@ -35,6 +35,61 @@ decomp.decomp(k) -> decomposition of matrix k
 
 from pathfinder import utils
 
+
+def _gram_svd_init(Clist, indices, mode, n_components, batch_size):
+    """Memory-light SVD initialisation via streamed Gram accumulation.
+
+    Returns the top-n_components singular vectors of the (never materialised)
+    concatenation of the matrices in `indices`, computed as the leading
+    eigenvectors of a Gram matrix accumulated one matrix - and one batch of
+    columns/rows - at a time. Peak memory is bounded by the factor dimension
+    squared, independent of how many matrices share the factor. Accuracy of the
+    small singular directions is reduced (the Gram squares the condition
+    number), which is immaterial for an initialisation the iterations refine.
+    The returned columns are orthonormal.
+
+    Parameters
+    ----------
+    Clist : list of 2D arrays
+    indices : list of int
+        Data indices sharing this factor (a lookup-table entry).
+    mode : str
+        'left'  : left singular vectors of the horizontal concat [C_i | ...]
+                  (matrices share rows); accumulates sum_i C_i C_i^T.
+        'right' : right singular vectors of the vertical concat [C_i ; ...]
+                  (matrices share cols); accumulates sum_i C_i^T C_i.
+    n_components : int
+        Number of leading singular vectors to return.
+    batch_size : int
+        Column/row chunk size for the streamed accumulation.
+    """
+    if mode == 'left':
+        dim = Clist[indices[0]].shape[0]
+        G = np.zeros((dim, dim))
+        for i in indices:
+            C = Clist[i]
+            ncol = C.shape[1]
+            for c0 in range(0, ncol, batch_size):
+                blk = C[:, c0:min(c0 + batch_size, ncol)]
+                G += blk @ blk.T
+    elif mode == 'right':
+        dim = Clist[indices[0]].shape[1]
+        G = np.zeros((dim, dim))
+        for i in indices:
+            C = Clist[i]
+            nrow = C.shape[0]
+            for r0 in range(0, nrow, batch_size):
+                blk = C[r0:min(r0 + batch_size, nrow), :]
+                G += blk.T @ blk
+    else:
+        raise ValueError(f"mode must be 'left' or 'right', got '{mode}'")
+    # leading eigenvectors (eigh returns eigenvalues in ascending order).
+    # .copy() the k columns we keep so the full (dim x dim) eigenvector matrix
+    # can be freed rather than kept alive by a slice-view.
+    eigvecs = np.linalg.eigh(G)[1]
+    return eigvecs[:, ::-1][:, :n_components].copy()
+
+
 class JointOuterDecomp(object):
     def __init__(self, n_components, n_iter=100, dropout=-1, 
                  alpha=1e-5, method=None, method_kwargs=None, do_ica=None, 
@@ -83,7 +138,7 @@ class JointOuterDecomp(object):
         self.batch_size = batch_size
         self._use_minibatch = (self.batch_size is not None)
         self.update_fraction = update_fraction
-        if init_type not in ('random', 'svd', 'svd_quick'):
+        if init_type not in ('random', 'svd'):
             raise ValueError(f"init_type must be 'random' or 'svd', got '{init_type}'")
         self.init_type = init_type
         
@@ -153,12 +208,15 @@ class JointOuterDecomp(object):
             nrows = Clist[ self._Alu[p][0] ].shape[0]
             if self.init_type == 'random':
                 self._A[p] = np.random.randn(nrows, self.n_components)
-            elif self.init_type == 'svd':  # svd 
-                #(this would be memory-intensive for large matrices)
-                concat_mat = np.concatenate([Clist[i] for i in self._Alu[p]], axis=1)
-                self._A[p] = svd(concat_mat, full_matrices=False)[0][:, :self.n_components]
-            elif self.init_type == 'svd_quick':
-                self._A[p] = svd(Clist[self._Alu[p][0]], full_matrices=False)[0][:, :self.n_components]
+            elif self.init_type == 'svd':  # svd
+                if self._use_minibatch:
+                    # streamed Gram accumulation - no concatenation
+                    self._A[p] = _gram_svd_init(Clist, self._Alu[p], 'left',
+                                                self.n_components, self.batch_size)
+                else:
+                    # full concatenation (memory-intensive for large matrices)
+                    concat_mat = np.concatenate([Clist[i] for i in self._Alu[p]], axis=1)
+                    self._A[p] = svd(concat_mat, full_matrices=False)[0][:, :self.n_components]
             else:
                 raise ValueError(f'Unrecognised init_type={self.init_type}')
         for q in range(self._Q):
@@ -166,10 +224,13 @@ class JointOuterDecomp(object):
             if self.init_type == 'random':
                 self._S[q] = np.random.randn(ncols, self.n_components)
             elif self.init_type == 'svd':  # svd
-                concat_mat = np.concatenate([Clist[i] for i in self._Slu[q]], axis=0)
-                self._S[q] = svd(concat_mat, full_matrices=False)[2][:self.n_components, :].T
-            elif self.init_type == 'svd_quick':
-                self._S[q] = svd(Clist[self._Slu[q][0]], full_matrices=False)[2][:self.n_components, :].T
+                if self._use_minibatch:
+                    # streamed Gram accumulation - no concatenation
+                    self._S[q] = _gram_svd_init(Clist, self._Slu[q], 'right',
+                                                self.n_components, self.batch_size)
+                else:
+                    concat_mat = np.concatenate([Clist[i] for i in self._Slu[q]], axis=0)
+                    self._S[q] = svd(concat_mat, full_matrices=False)[2][:self.n_components, :].T
             else:
                 raise ValueError(f'Unrecognised init_type={self.init_type}')
 
@@ -466,8 +527,9 @@ class JointOuterDecomp(object):
 
 # ANOTHER DECOMPOSITION APPROACH : JointSVD
 class JointSVD(object):
-    def __init__(self, n_components, n_iter=10, do_ica=None, batch_size=None, 
-                 n_power_iter=2, update_fraction=1.0, verbose=True):
+    def __init__(self, n_components, n_iter=10, batch_size=None,
+                 n_power_iter=2, update_fraction=1.0, init_type='random',
+                 verbose=True):
         """Joint Singular Value Decomposition.
 
         Given set of matrices C1, ..., CK, performs a joint SVD such that:
@@ -490,8 +552,6 @@ class JointSVD(object):
             Number of components.
         n_iter : int
             Number of iterations.
-        do_ica : str or None
-            Perform ICA rotation at the end. Can be 'rows', 'cols', or 'both'.
         batch_size : int or None
             If None, use full batch updates, otherwise use minibatch updates.
         n_power_iter : int
@@ -499,16 +559,23 @@ class JointSVD(object):
         update_fraction : float
             Fraction of factors to update each iteration.
             1.0 means update all (default), <1.0 means random subset.
+        init_type : str
+            Type of initialisation. 'random' (default) uses random orthonormal
+            matrices; 'svd' uses the leading singular vectors of the
+            concatenated data (streamed Gram accumulation when batch_size is
+            set). Both yield orthonormal U/V.
         verbose : bool
             Whether to print progress during fitting.
         """
         self._ncomp  = n_components
         self._niter  = n_iter
-        self._do_ica = do_ica
         self.batch_size = batch_size
         self.n_power_iter = n_power_iter
         self._use_minibatch = (self.batch_size is not None)
         self.update_fraction = update_fraction
+        if init_type not in ('random', 'svd'):
+            raise ValueError(f"init_type must be 'random' or 'svd', got '{init_type}'")
+        self.init_type = init_type
         self.verbose = verbose
         
         self._K      = None
@@ -558,20 +625,41 @@ class JointSVD(object):
 
 
     def init(self, Clist):
-        """Initialise the U's, the V's, and the D's.
-        U's and V's are initialised with random orthonormal matrices.
-        The D's are computed to minimise the loss.
+        """Initialise the U's, the V's, and the D's based on init_type.
+
+        U's and V's are orthonormal in both cases: 'random' uses random
+        orthonormal matrices (QR of Gaussian noise); 'svd' uses the leading
+        singular vectors of the concatenated data (streamed Gram accumulation
+        when batch_size is set). The D's are then computed to minimise the loss.
         """
         self._Ulist = [[] for _ in range(self._P)]
         self._Vlist = [[] for _ in range(self._Q)]
         self._Dlist = [[] for _ in range(self._K)]
+        if self.verbose:
+            print(f'Initialising U and V with {self.init_type}...')
 
         for p in range(self._P):
             nrows = Clist[self._Ulu[p][0]].shape[0]
-            self._Ulist[p] = qr(np.random.randn(nrows, self._ncomp), mode='economic')[0]
+            if self.init_type == 'random':
+                self._Ulist[p] = qr(np.random.randn(nrows, self._ncomp), mode='economic')[0]
+            elif self._use_minibatch:
+                # streamed Gram accumulation - no concatenation
+                self._Ulist[p] = _gram_svd_init(Clist, self._Ulu[p], 'left',
+                                                self._ncomp, self.batch_size)
+            else:
+                concat_mat = np.concatenate([Clist[i] for i in self._Ulu[p]], axis=1)
+                self._Ulist[p] = svd(concat_mat, full_matrices=False)[0][:, :self._ncomp]
         for q in range(self._Q):
             ncols = Clist[self._Vlu[q][0]].shape[1]
-            self._Vlist[q] = qr(np.random.randn(ncols, self._ncomp), mode='economic')[0]
+            if self.init_type == 'random':
+                self._Vlist[q] = qr(np.random.randn(ncols, self._ncomp), mode='economic')[0]
+            elif self._use_minibatch:
+                # streamed Gram accumulation - no concatenation
+                self._Vlist[q] = _gram_svd_init(Clist, self._Vlu[q], 'right',
+                                                self._ncomp, self.batch_size)
+            else:
+                concat_mat = np.concatenate([Clist[i] for i in self._Vlu[q]], axis=0)
+                self._Vlist[q] = svd(concat_mat, full_matrices=False)[2][:self._ncomp, :].T
         for k in range(self._K):
             self._updateD(Clist, k)
 
@@ -841,13 +929,7 @@ class JointSVD(object):
                 mean_loss = np.mean(self._loss[it+1,:])
                 progress = (it + 1) / self._niter * 100
                 print(f'\rIteration {it+1:4d}/{self._niter} [{progress:5.1f}%] | Loss: {mean_loss:.6f}', end='')
-        
+
         if self.verbose:
             print()  # newline after progress
-            
-        # Do ICA at the end?
-        if self._do_ica is not None:
-            self._Ulist, self._Vlist, ica = utils.perform_ica(self._Ulist, self._Vlist, self._do_ica, return_ica=True)
-            # Need to do something with the D's otherwise predict() doesn't work
-            # NEED TO FIX THIS AND WRITE A TEST
 

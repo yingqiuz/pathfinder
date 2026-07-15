@@ -50,3 +50,42 @@ def test_Lookup():
     data2              = utils.Lookup_to_DataTable(Clist, alpha, beta, list(data.keys()), list(data[list(data.keys())[0]].keys()))
 
     assert np.all(data2['Dom1']['Mod2'] == data['Dom1']['Mod2'])
+
+
+def test_perform_ica_product_preservation():
+    """perform_ica should preserve A @ S^T for all approach options."""
+    import warnings
+    warnings.filterwarnings("ignore")
+
+    rng = np.random.default_rng(42)
+    A = [rng.standard_normal((50, 5)) ** 3 for _ in range(3)]
+    S = [rng.standard_normal((40, 5)) / 10. for _ in range(2)]
+
+    for approach in ['left', 'right', 'both']:
+        A_ica, S_ica = utils.perform_ica(A, S, approach=approach)
+        assert len(A_ica) == len(A)
+        assert len(S_ica) == len(S)
+        # Check product preservation
+        for p in range(len(A)):
+            for q in range(len(S)):
+                orig = A[p] @ S[q].T
+                rotated = A_ica[p] @ S_ica[q].T
+                diff = np.max(np.abs(orig - rotated))
+                assert diff < 1e-6, (
+                    f"approach='{approach}', ({p},{q}): "
+                    f"product not preserved (max diff = {diff:.2e})"
+                )
+
+
+def test_perform_ica_return_ica():
+    """perform_ica with return_ica=True returns the ICA object."""
+    import warnings
+    warnings.filterwarnings("ignore")
+
+    rng = np.random.default_rng(0)
+    A = [rng.standard_normal((50, 3)) ** 3 for _ in range(2)]
+    S = [rng.standard_normal((40, 3)) / 10. for _ in range(2)]
+
+    A_ica, S_ica, ica = utils.perform_ica(A, S, approach='left', return_ica=True)
+    assert hasattr(ica, 'components_')
+    assert ica.components_.shape == (3, 3)

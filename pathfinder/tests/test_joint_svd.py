@@ -46,3 +46,25 @@ def test_JointSVD():
     assert len(algo._Vlist) == 2
     assert len(algo.predict()) == len(data)
 
+
+def test_JointSVD_init_type():
+    """SVD init (full-batch and Gram/minibatch) yields orthonormal U/V and fits;
+    invalid init_type raises."""
+    import pytest
+    Clist, alpha, beta = utils.simulate_JointSVD(K=6, num_U=2, num_V=3, rank=4, SNR=50)
+
+    for kwargs in [dict(init_type='svd'),               # full-batch concat SVD
+                   dict(init_type='svd', batch_size=16),  # streamed Gram accum
+                   dict(init_type='random')]:
+        algo = decomp.JointSVD(n_components=4, n_iter=5, verbose=False, **kwargs)
+        algo.fit(Clist, alpha, beta)
+        assert len(algo._Ulist) == 2 and len(algo._Vlist) == 3
+        assert len(algo.predict()) == len(Clist)
+        for U in algo._Ulist:
+            assert np.allclose(U.T @ U, np.eye(4), atol=1e-8), 'U not orthonormal'
+        for V in algo._Vlist:
+            assert np.allclose(V.T @ V, np.eye(4), atol=1e-8), 'V not orthonormal'
+
+    with pytest.raises(ValueError):
+        decomp.JointSVD(n_components=4, init_type='bogus')
+

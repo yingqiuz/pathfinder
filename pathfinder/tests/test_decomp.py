@@ -376,7 +376,6 @@ class TestJointSVD:
         algo = decomp.JointSVD(n_components=5)
         assert algo._ncomp == 5
         assert algo._niter == 10
-        assert algo._do_ica is None
         assert algo.batch_size is None
         assert algo.n_power_iter == 2
         assert algo._use_minibatch is False
@@ -387,14 +386,12 @@ class TestJointSVD:
         algo = decomp.JointSVD(
             n_components=10,
             n_iter=20,
-            do_ica='both',
             batch_size=32,
             n_power_iter=5,
             update_fraction=0.5
         )
         assert algo._ncomp == 10
         assert algo._niter == 20
-        assert algo._do_ica == 'both'
         assert algo.batch_size == 32
         assert algo.n_power_iter == 5
         assert algo._use_minibatch is True
