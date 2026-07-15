@@ -1,6 +1,7 @@
 # pathfinder
 
 ![tests](https://github.com/yingqiuz/pathfinder/actions/workflows/tests.yml/badge.svg)
+[![DOI](https://zenodo.org/badge/1301873006.svg)](https://doi.org/10.5281/zenodo.21383855)
 
 ## Goals
 
