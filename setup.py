@@ -9,9 +9,13 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setup(name='pathfinder',
+      version='0.1.0',
       description='Joint multimodal decomposition',
-      author='Saad Jbabdi',
+      long_description=long_description,
+      long_description_content_type='text/markdown',
+      author='Akina Ying-Qiu Zheng and Saad Jbabdi',
       author_email='<saad.jbabdi@ndcn.ox.ac.uk>',
+      license='MIT',
       packages=['pathfinder',],
       install_requires=install_requires,
       python_requires='>=3.10',
