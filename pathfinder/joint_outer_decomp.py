@@ -232,10 +232,8 @@ class JointOuterDecomp(object):
         # Update A
         self._A[p] = self.regress(concat_mat, concat_S.T, mode='left')
 
-        return
-
     def _update_A_minibatch(self, Clist, p):
-        f"""Minibatch update for A[p] using closed-form solution
+        """Minibatch update for A[p] using closed-form solution
         solves: A = C @ S @ (S^T@S + alpha*I)^{-1} by accumulating S^T @ S and C @ S in mini-batches
         TODO: add support for full SGD?
         """
@@ -299,11 +297,8 @@ class JointOuterDecomp(object):
         concat_mat = np.concatenate([Clist[i] for i in indices], axis=0)
         concat_A   = np.concatenate([self._A[self._alpha[i]] for i in indices], axis=0)
 
-        # Update A
+        # Update S
         self._S[q] = self.regress(concat_mat, concat_A, mode='right')
-
-        return
-
 
     def _update_S_minibatch(self, Clist, q):
         """Minibatch update for S[q] using closed-form solution

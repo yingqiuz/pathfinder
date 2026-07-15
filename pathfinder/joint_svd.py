@@ -183,11 +183,10 @@ class JointSVD(object):
         U = []
         for n in range(self._ncomp):
             MV = []
-            for k in range(self._K):
-                if k in self._Ulu[p]:
-                    C = Clist[k]
-                    v = self._Vlist[self._beta[k]][:,n]
-                    MV.append( np.dot(C, v) )
+            for k in self._Ulu[p]:
+                C = Clist[k]
+                v = self._Vlist[self._beta[k]][:,n]
+                MV.append( np.dot(C, v) )
             MV = np.asarray(MV).T
             if MV.shape[1]>1:
                 u = svds(MV, k=1)[0].flatten()
@@ -259,11 +258,10 @@ class JointSVD(object):
         V = []
         for n in range(self._ncomp):
             MU = []
-            for k in range(self._K):
-                if k in self._Vlu[q]:
-                    C = Clist[k]
-                    u = self._Ulist[self._alpha[k]][:,n]
-                    MU.append( np.dot(C.T, u) )
+            for k in self._Vlu[q]:
+                C = Clist[k]
+                u = self._Ulist[self._alpha[k]][:,n]
+                MU.append( np.dot(C.T, u) )
             MU = np.asarray(MU).T
             if MU.shape[1]>1:
                 v  = svds(MU, k=1)[0].flatten()
@@ -365,8 +363,6 @@ class JointSVD(object):
 
         then alpha = [0, 0, 1] and beta = [0, 1, 1]
         """
-        # Possibly not the most efficient algorithm in the world, as it concatenates
-        # potentially large matrices.
         # Checks data dimensions
         if (alpha is None) or (beta is None):
             # it is assumed that Clist is actually a dict
